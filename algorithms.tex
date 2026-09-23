@@ -8111,71 +8111,227 @@ twiddle multiplication.
 \end{proof}
 
 \section{A cache-friendly matrix Fourier algorithm}
+\label{sec:mfa}
 
-The full transform can be reordered into shorter row and column transforms.
-This is useful in its own right for large coefficients, and it also gives the
-organization needed by the cache-friendly TFT and ITFT of Harvey
-\cite{Harvey2008CacheTFT}.  We use the weighted, bit-reversed transform
+The radix-$2$ FFT fixes the arithmetic count, but not the order in which the
+butterflies are visited.  For large ring elements this order matters because a
+long transform repeatedly streams through data that no longer fits in cache.
+The matrix Fourier algorithm (MFA) reorganizes the same transform into shorter
+column and row transforms.  It has the same arithmetic and bit complexity as
+the radix-$2$ FFT, but usually has better locality.  More importantly for the
+next stage of the implementation, the same decomposition underlies the
+cache-friendly TFT and ITFT of Harvey \cite{Harvey2008CacheTFT}.
+
+The convenient recursive object is a weighted transform whose output is stored
+in bit-reversed order.  Let $L=2^\ell$, let $\omega_L$ be a principal $L$th
+root of unity, let $\zeta$ be a unit, and write $j'$ for the $\ell$-bit
+reversal of $j$.
+
+\begin{definition}[Weighted bit-reversed transform]\label{def:weighted-dft}
+For $a=(a_0,\ldots,a_{L-1})$, define
 \begin{equation}\label{eq:weighted-dft}
- \widehat a_j=\zeta^{j'}\sum_{i=0}^{L-1}\omega_L^{ij'}a_i,
- \qquad 0\leq j<L,
+ \mathcal F_{L,\zeta}(a)_j
+ =\zeta^{j'}\sum_{i=0}^{L-1}\omega_L^{ij'}a_i,
+ \qquad 0\leq j<L.
 \end{equation}
-where $j'$ is the $\log_2L$-bit reversal of $j$.  The ordinary forward
-transform is the case $\zeta=1$.
+Thus $\mathcal F_{L,1}(a)_j$ is the ordinary Fourier coefficient with
+frequency $j'$.  The case $\zeta\ne1$ occurs naturally in the column
+transforms below and later in the TFT.
+\end{definition}
 
-Write $L=L_1L_2$, with both factors powers of two, and index an entry by
-$i=i_2+L_2i_1$.  If $j=j_2+L_2j_1$, then bit reversal gives
-$j'=j_1'+L_1j_2'$.  Define
+The weighted transform needs no extra multiplication per butterfly.  In a DIF
+butterfly, if the current root exponent is $e$, one computes
+\begin{equation}\label{eq:weighted-dif-butterfly}
+ (x,y)\longmapsto
+ \bigl(x+y,(x-y)\omega^e\bigr),
+\end{equation}
+and the weight is simply included in $e$.  This is the weighted radix-$2$
+kernel used at the leaves of the implementation.
+
+Suppose now that $L=L_1L_2$, where $L_i=2^{\ell_i}$ and
+$\ell_1+\ell_2=\ell$.  Write
+\begin{equation}\label{eq:mfa-index-split}
+ i=i_2+L_2i_1,
+ \qquad
+ j=j_2+L_2j_1,
+\end{equation}
+with $0\leq i_1,j_1<L_1$ and $0\leq i_2,j_2<L_2$.
+
+\begin{lemma}[Bit reversal under a matrix split]\label{lem:mfa-bit-reversal}
+With the notation above,
+\begin{equation}\label{eq:mfa-bit-reversal}
+ j'=j_1'+L_1j_2',
+\end{equation}
+where $j_1'$ and $j_2'$ are the $\ell_1$- and $\ell_2$-bit reversals of
+$j_1$ and $j_2$ respectively.
+\end{lemma}
+
+\begin{proof}
+The binary expansion of $j$ consists of the $\ell_1$ bits of $j_1$ followed
+by the $\ell_2$ bits of $j_2$, with $j_2$ occupying the low positions.
+Reversing all $\ell$ bits reverses each block and exchanges their order.
+Thus the low $\ell_1$ bits of $j'$ are $j_1'$ and the remaining bits are
+$j_2'$, which is exactly \eqref{eq:mfa-bit-reversal}.
+\end{proof}
+
+Regard the input as an $L_1\times L_2$ matrix in row-major order.  For each
+column $k_2$, define
 \begin{equation}\label{eq:mfa-columns}
- b_{k_2+L_2k_1}=
- (\zeta\omega_L^{k_2})^{k_1'}
- \sum_{m=0}^{L_1-1}\omega_{L_1}^{mk_1'}a_{k_2+L_2m}.
+ b_{k_2+L_2k_1}
+ = (\zeta\omega_L^{k_2})^{k_1'}
+   \sum_{m=0}^{L_1-1}\omega_{L_1}^{mk_1'}
+   a_{k_2+L_2m}.
 \end{equation}
-Then
+Thus column $k_2$ is a length-$L_1$ weighted transform with weight
+$\zeta\omega_L^{k_2}$.  Next, for every row $j_1$, define
 \begin{equation}\label{eq:mfa-rows}
- \widehat a_{j_2+L_2j_1}=
- (\zeta^{L_1})^{j_2'}
- \sum_{r=0}^{L_2-1}\omega_{L_2}^{rj_2'}b_{r+L_2j_1}.
+ c_{j_2+L_2j_1}
+ = (\zeta^{L_1})^{j_2'}
+   \sum_{r=0}^{L_2-1}\omega_{L_2}^{rj_2'}
+   b_{r+L_2j_1}.
 \end{equation}
-Thus the transform consists of $L_2$ weighted column transforms of length
-$L_1$, followed by $L_1$ weighted row transforms of length $L_2$.
+Each row is therefore a length-$L_2$ weighted transform with the common
+weight $\zeta^{L_1}$.
 
-\begin{theorem}[Matrix Fourier decomposition]\label{thm:mfa}
-Equations~\eqref{eq:mfa-columns} and \eqref{eq:mfa-rows} compute the weighted
-transform \eqref{eq:weighted-dft}.  Reversing the row and column stages and
-using inverse weights, followed by multiplication by $L^{-1}$, gives the
-inverse transform.  The number of radix-$2$ butterflies is unchanged.
+\begin{algorithm}[Recursive matrix Fourier transform]\label{alg:mfa-forward}
+To compute $\mathcal F_{L,\zeta}$ in place:
+\begin{enumerate}
+ \item if $L$ is at most the chosen leaf size, use the weighted radix-$2$
+ kernel \eqref{eq:weighted-dif-butterfly};
+ \item otherwise choose
+ $L_1=2^{\lfloor\ell/2\rfloor}$ and
+ $L_2=2^{\lceil\ell/2\rceil}$;
+ \item apply $\mathcal F_{L_1,\zeta\omega_L^{k_2}}$ to each of the $L_2$
+ strided columns, producing the values in \eqref{eq:mfa-columns};
+ \item apply $\mathcal F_{L_2,\zeta^{L_1}}$ to each of the $L_1$ contiguous
+ rows, producing the values in \eqref{eq:mfa-rows}.
+\end{enumerate}
+The inverse performs the row transforms first and the column transforms
+second, with inverse roots and inverse weights, and multiplies by $L^{-1}$
+once at the end.
+\end{algorithm}
+
+\begin{theorem}[Correctness of the MFA]\label{thm:mfa}
+Algorithm~\ref{alg:mfa-forward} computes the weighted transform
+\eqref{eq:weighted-dft}.  In particular, when $\zeta=1$ it computes the
+ordinary DFT in exactly the same bit-reversed ordering as
+Algorithm~\ref{alg:fft-dif}.  The inverse described in
+Algorithm~\ref{alg:mfa-forward} recovers the input in natural order.
 \end{theorem}
 
 \begin{proof}
-Substitute \eqref{eq:mfa-columns} into \eqref{eq:mfa-rows}.  Since
+Fix $j=j_2+L_2j_1$.  Substitute \eqref{eq:mfa-columns} into
+\eqref{eq:mfa-rows}.  Since
 $\omega_{L_1}=\omega_L^{L_2}$ and
-$\omega_{L_2}=\omega_L^{L_1}$, the exponent of $\omega_L$ becomes
+$\omega_{L_2}=\omega_L^{L_1}$, the power of $\zeta$ is
 \[
- L_2 i_1j_1'+i_2j_1'+L_1i_2j_2'
- \equiv(L_2i_1+i_2)(j_1'+L_1j_2')=ij'\pmod L.
+ \zeta^{k_1'+L_1j_2'},
 \]
-The powers of $\zeta$ combine to $\zeta^{j_1'+L_1j_2'}=\zeta^{j'}$,
-which proves the forward identity.  Both stages are invertible weighted DFTs,
-so applying their inverses in reverse order and normalizing by $L^{-1}$ proves
-the inverse statement.  The decomposition only changes the order in which the
-same Cooley--Tukey butterflies are evaluated.
+where the row index $k_1$ is $j_1$.  By
+Lemma~\ref{lem:mfa-bit-reversal}, this is $\zeta^{j'}$.
+
+The exponent of $\omega_L$ attached to the term
+$a_{i_2+L_2i_1}$ is
+\[
+ L_2i_1j_1'+i_2j_1'+L_1i_2j_2'.
+\]
+On the other hand,
+\begin{align*}
+ (i_2+L_2i_1)(j_1'+L_1j_2')
+  ={}&L_2i_1j_1'+i_2j_1'+L_1i_2j_2'\\
+    &{}+Li_1j_2'.
+\end{align*}
+The final term is a multiple of $L$, so it disappears because
+$\omega_L^L=1$.  Therefore the exponent is congruent to $ij'$ modulo $L$,
+and \eqref{eq:mfa-rows} becomes
+\[
+ c_j=\zeta^{j'}\sum_{i=0}^{L-1}\omega_L^{ij'}a_i.
+\]
+This is exactly \eqref{eq:weighted-dft}.
+
+The recursive calls compute precisely the column and row transforms just
+proved, so induction on $\ell$ establishes the forward algorithm.  Each
+weighted transform is invertible: it is an ordinary DFT, a bit-reversal
+permutation and multiplication by units.  Reversing the row and column
+stages with inverse roots and inverse weights therefore gives the inverse.
+The two unnormalized inverse dimensions contribute the factor
+$L_1L_2=L$, so one final multiplication by $L^{-1}$ completes inversion.
 \end{proof}
 
-The implementation splits the logarithmic length approximately in half and
-passes a stride, a root stride and the exponent of $\zeta$ through the
-recursive calls.  Small subtransforms use a weighted radix-$2$ kernel.  This
-is deliberate: the later TFT needs the same weighted strided transforms on
-partially populated rows and columns, so the full MFA does not introduce a
-second incompatible transform representation.  The SSA backend currently
-uses the MFA only for sufficiently large transforms; the word-prime NTT keeps
-the ordinary radix-$2$ schedule until a separate crossover is established.
+The implementation carries a data stride, a root stride and the exponent of
+$\zeta$ through the recursion rather than materializing columns or separate
+root tables.  Small subtransforms use the weighted radix-$2$ kernel.  This is
+important for the planned TFT: partially populated rows and columns require
+exactly the same weighted, strided transforms, so the MFA is not a temporary
+cache optimization that must later be replaced.
 
-Pairing DIF forward transforms with a DIT inverse is useful because no explicit
-bit-reversal permutation is required between transformation and pointwise
-multiplication.  The MFA preserves the same ordering.  Truncated Fourier
-transforms will omit butterflies associated with known zero inputs or
-unwanted outputs while retaining the same DFT and convolution identities.
+\begin{theorem}[MFA arithmetic count]\label{thm:mfa-operation-count}
+A complete length-$L=2^\ell$ MFA uses exactly $L\ell/2$ radix-$2$
+butterflies.  Consequently it uses exactly $L\ell$ additions or
+subtractions and at most $L\ell/2$ multiplications by roots of unity, as in
+Theorem~\ref{thm:fft-operation-count}.
+\end{theorem}
+
+\begin{proof}
+Let $B(L)$ be the butterfly count.  For $L=L_1L_2$, the column stage consists
+of $L_2$ transforms of length $L_1$, and the row stage consists of $L_1$
+transforms of length $L_2$.  Hence
+\[
+ B(L)=L_2B(L_1)+L_1B(L_2).
+\]
+Using the radix-$2$ leaf count and induction,
+\begin{align*}
+ B(L)
+ &=\frac{L_2L_1\log_2L_1}{2}
+   +\frac{L_1L_2\log_2L_2}{2}\\
+ &=\frac{L}{2}(\log_2L_1+\log_2L_2)
+  =\frac{L\log_2L}{2}.
+\end{align*}
+A weighted butterfly still has two additions or subtractions and at most one
+multiplication by a root power, since the weight is absorbed into the twiddle
+exponent.  A multiplication by $1$ may of course be omitted.  Thus the same
+upper bound holds for the root multiplications.
+\end{proof}
+
+\begin{theorem}[MFA bit complexity]\label{thm:mfa-bit-complexity}
+Suppose a transform ring element occupies $O(K)$ bits, addition and
+subtraction cost $O(K)$ bit operations, and multiplication by every root power
+used by the transform costs $O(K)$ bit operations.  Then a length-$L$ MFA has
+bit complexity
+\begin{equation}\label{eq:mfa-bit-complexity}
+ O(KL\log L)
+\end{equation}
+and uses $O(KL)$ bits of transform storage.  In particular, replacing the
+radix-$2$ transforms in the $2^K+1$ multiplication algorithm by MFA transforms
+does not change the bound
+\[
+ O\bigl(NK\log N+N\MZ(K)\bigr)
+\]
+from Theorem~\ref{thm:ssa-poly-complexity}.
+\end{theorem}
+
+\begin{proof}
+Theorem~\ref{thm:mfa-operation-count} gives $O(L\log L)$ butterflies, and
+under the stated hypotheses each butterfly costs $O(K)$ bit operations.
+The transform remains in place, so its array contains $L$ ring elements of
+$O(K)$ bits.  Only a constant number of temporary ring elements and a
+logarithmic recursion stack are needed in addition.
+
+For the ring $\ZZ/(2^K+1)\ZZ$, all transform roots are powers of two.
+Multiplication by such a root is a shift followed by signed folding modulo
+$2^K+1$, hence costs $O(K)$ bit operations.  The two forward transforms and
+one inverse therefore still cost $O(NK\log N)$.  The $N$ pointwise products
+are unchanged and still cost $O(N\MZ(K))$.
+\end{proof}
+
+Thus the MFA does not improve the asymptotic bit complexity, nor does it save
+any butterflies in a full transform.  Its advantage is locality: the balanced
+choice $L_1\approx L_2\approx\sqrt L$ turns a long transform into families of
+short transforms whose working sets can fit lower levels of cache.  The
+machine-dependent crossover is therefore tuned rather than fixed.  This also
+explains why the MFA is a useful stepping stone rather than the final
+smoothing mechanism: the later TFT will use the same matrix decomposition but
+will omit work belonging to known zero inputs and unrequested outputs.
 
 \section{Number-theoretic transforms and CRT multiplication}
 

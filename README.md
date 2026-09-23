@@ -44,7 +44,7 @@ is a machine-local overlay, is ignored by Git, and is created automatically with
 overrides if it is missing.  This lets patches add new defaults without overwriting a
 machine's measured values.
 
-`make tune-mul` builds a separate `SC_TUNE` core in which the full-product and SSA MFA
+`make tune` builds a separate `SC_TUNE` core in which the full-product and SSA MFA
 cutoffs are writable variables.  Each multiplication point alternates the two algorithms,
 uses paired timing ratios, aims for 1% MAD, and brackets the crossover between a 5% loss
 and a 5% win.  The NTT cutoff is measured as shorter length per CRT prime.  MFA is timed
