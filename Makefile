@@ -16,6 +16,7 @@ CORE_SOURCES = \
     src/value.c \
     src/memory.c \
     src/zz.c \
+    src/fft_mod.c \
     src/poly.c \
     src/zz_poly.c \
     src/zz_poly_lr.c \
@@ -39,6 +40,7 @@ COMP_TEST = $(BUILD)/test_composition
 CALC_TEST = $(BUILD)/test_calculus
 STRUCT_TEST = $(BUILD)/test_structural
 TAYLOR_TEST = $(BUILD)/test_taylor_shift
+FFT_MOD_TEST = $(BUILD)/test_fft_mod
 
 .PHONY: all clean pdf check check-lines check-functions test test-core
 
@@ -104,6 +106,9 @@ $(STRUCT_TEST): tests/structural.c $(CORE_OBJECTS) $(BUILD)/env.o $(BUILD)/dispa
 $(TAYLOR_TEST): tests/taylor_shift.c $(CORE_OBJECTS) $(BUILD)/env.o $(BUILD)/dispatch.o | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -lgmp -o $@
 
+$(FFT_MOD_TEST): tests/fft_mod.c $(BUILD)/fft_mod.o | $(BUILD)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -lgmp -o $@
+
 $(BUILD):
 	mkdir -p $(BUILD)
 
@@ -117,7 +122,7 @@ check-functions:
 	@awk -f tools/check-functions.awk src/zz.c src/poly.c src/zz_poly.c
 
 test-core: $(MUL_TEST) $(DIV_TEST) $(GCD_TEST) $(UNPACK_TEST) $(EVAL_TEST) \
-	$(COMP_TEST) $(CALC_TEST) $(STRUCT_TEST) $(TAYLOR_TEST)
+	$(COMP_TEST) $(CALC_TEST) $(STRUCT_TEST) $(TAYLOR_TEST) $(FFT_MOD_TEST)
 	@$(MUL_TEST)
 	@$(DIV_TEST)
 	@$(GCD_TEST)
@@ -127,6 +132,7 @@ test-core: $(MUL_TEST) $(DIV_TEST) $(GCD_TEST) $(UNPACK_TEST) $(EVAL_TEST) \
 	@$(CALC_TEST)
 	@$(STRUCT_TEST)
 	@$(TAYLOR_TEST)
+	@$(FFT_MOD_TEST)
 
 test: smallcas test-core
 	@sh tests/smoke.sh
