@@ -3,56 +3,110 @@
 
 #include <gmp.h>
 #include <stddef.h>
+#include <stdint.h>
 
 typedef struct sc_fft_mod {
-    mpz_t mod;
-    mpz_t root;
-    mpz_t root_inv;
+    uint64_t c;
+    mp_bitcnt_t bits;
+    mp_size_t n;
+    mp_ptr mod, root, root_inv;
     unsigned depth;
+    int fermat;
 } sc_fft_mod;
 
-int sc_fft_mod_init(sc_fft_mod *m, mpz_srcptr mod, mpz_srcptr root,
-                    unsigned depth);
+typedef struct sc_fft_plan {
+    size_t len;
+    unsigned logn;
+    mp_ptr fwd, inv;
+    size_t root_stride;
+} sc_fft_plan;
+
+int sc_fft_mod_init(sc_fft_mod *m, uint64_t c, mp_bitcnt_t bits,
+                    uint64_t root, unsigned depth);
 void sc_fft_mod_clear(sc_fft_mod *m);
-void sc_fft_root_power(mpz_t r, size_t e, int inverse, const sc_fft_mod *m);
-void sc_fft_div_2exp(mpz_t a, size_t k, const sc_fft_mod *m);
+int sc_fft_plan_init(sc_fft_plan *p, unsigned logn, const sc_fft_mod *m);
+void sc_fft_plan_clear(sc_fft_plan *p);
+void sc_fft_forward(mp_ptr a, const sc_fft_plan *p, const sc_fft_mod *m,
+                    mp_ptr scratch);
+void sc_fft_inverse(mp_ptr a, const sc_fft_plan *p, const sc_fft_mod *m,
+                    mp_ptr scratch);
+void sc_fft_mul(mp_ptr r, mp_srcptr a, mp_srcptr b,
+                const sc_fft_mod *m, mp_ptr scratch);
+void sc_fft_div_2exp(mp_ptr a, size_t k, const sc_fft_mod *m);
+void sc_fft_mul_2exp(mp_ptr r, mp_srcptr a, size_t e,
+                     const sc_fft_mod *m, mp_ptr scratch);
 
-static inline void sc_fft_set_z(mpz_t r, mpz_srcptr a, const sc_fft_mod *m)
+static inline mp_ptr sc_fft_entry(mp_ptr a, size_t i, const sc_fft_mod *m)
 {
-    mpz_mod(r, a, m->mod);
+    return a + i * (size_t)m->n;
 }
 
-static inline void sc_fft_add(mpz_t r, mpz_srcptr a, mpz_srcptr b,
+static inline mp_srcptr sc_fft_entry_const(mp_srcptr a, size_t i,
+                                            const sc_fft_mod *m)
+{
+    return a + i * (size_t)m->n;
+}
+
+static inline void sc_fft_set_ui(mp_ptr r, mp_limb_t a, const sc_fft_mod *m)
+{
+    mpn_zero(r, m->n);
+    r[0] = m->n == 1 ? a % m->mod[0] : a;
+}
+
+static inline int sc_fft_is_zero(mp_srcptr a, const sc_fft_mod *m)
+{
+    for (mp_size_t i = 0; i < m->n; i++)
+        if (a[i] != 0)
+            return 0;
+    return 1;
+}
+
+static inline void sc_fft_neg(mp_ptr r, mp_srcptr a, const sc_fft_mod *m)
+{
+    if (sc_fft_is_zero(a, m))
+        mpn_zero(r, m->n);
+    else
+        mpn_sub_n(r, m->mod, a, m->n);
+}
+
+static inline int sc_fft_equal(mp_srcptr a, mp_srcptr b, const sc_fft_mod *m)
+{
+    return mpn_cmp(a, b, m->n) == 0;
+}
+
+static inline int sc_fft_equal_ui(mp_srcptr a, mp_limb_t b,
+                                  const sc_fft_mod *m)
+{
+    if (a[0] != b)
+        return 0;
+    for (mp_size_t i = 1; i < m->n; i++)
+        if (a[i] != 0)
+            return 0;
+    return 1;
+}
+
+static inline void sc_fft_add(mp_ptr r, mp_srcptr a, mp_srcptr b,
                               const sc_fft_mod *m)
 {
-    mpz_add(r, a, b);
-    if (mpz_cmp(r, m->mod) >= 0)
-        mpz_sub(r, r, m->mod);
+    mp_limb_t cy = mpn_add_n(r, a, b, m->n);
+    if (cy || mpn_cmp(r, m->mod, m->n) >= 0)
+        mpn_sub_n(r, r, m->mod, m->n);
 }
 
-static inline void sc_fft_sub(mpz_t r, mpz_srcptr a, mpz_srcptr b,
+static inline void sc_fft_sub(mp_ptr r, mp_srcptr a, mp_srcptr b,
                               const sc_fft_mod *m)
 {
-    mpz_sub(r, a, b);
-    if (mpz_sgn(r) < 0)
-        mpz_add(r, r, m->mod);
+    mp_limb_t cy = mpn_sub_n(r, a, b, m->n);
+    if (cy)
+        mpn_add_n(r, r, m->mod, m->n);
 }
 
-static inline void sc_fft_mul(mpz_t r, mpz_srcptr a, mpz_srcptr b,
-                              const sc_fft_mod *m)
-{
-    mpz_mul(r, a, b);
-    mpz_mod(r, r, m->mod);
-}
-
-static inline void sc_fft_addsub(mpz_t a, mpz_t b, mpz_t t,
+static inline void sc_fft_addsub(mp_ptr a, mp_ptr b, mp_ptr t,
                                  const sc_fft_mod *m)
 {
-    mpz_set(t, a);
+    mpn_copyi(t, a, m->n);
     sc_fft_add(a, a, b, m);
     sc_fft_sub(b, t, b, m);
 }
-
-#define sc_fft_mul_root(r, a, w, m) sc_fft_mul((r), (a), (w), (m))
 
 #endif

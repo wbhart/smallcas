@@ -1,90 +1,65 @@
 #include "smallcas_fft.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 
-static int test_fermat_mod(void)
+static int test_moduli(void)
 {
-    sc_fft_mod m;
-    mpz_t p, root, a, b, c, d, t;
-    int ok = 1;
+    sc_fft_mod a, b;
+    int ok;
 
-    mpz_inits(p, root, a, b, c, d, t, NULL);
-    mpz_set_ui(p, 1);
-    mpz_setbit(p, 32);
-    mpz_set_ui(root, 2);
-    if (!sc_fft_mod_init(&m, p, root, 6))
-        ok = 0;
+    ok = sc_fft_mod_init(&a, 1, 64, 2, 7);
+    ok &= sc_fft_mod_init(&b, 15, 27, 440564289, 27);
     if (ok) {
-        mpz_sub_ui(a, p, 2);
-        mpz_set_ui(b, 5);
-        sc_fft_add(c, a, b, &m);
-        ok &= mpz_cmp_ui(c, 3) == 0;
-        sc_fft_sub(c, a, b, &m);
-        mpz_sub_ui(t, p, 7);
-        ok &= mpz_cmp(c, t) == 0;
-        sc_fft_mul(c, a, b, &m);
-        mpz_mul(t, a, b);
-        mpz_mod(t, t, p);
-        ok &= mpz_cmp(c, t) == 0;
-        mpz_set(c, a);
-        mpz_set(d, b);
-        sc_fft_addsub(c, d, t, &m);
-        ok &= mpz_cmp_ui(c, 3) == 0;
-        mpz_sub_ui(a, p, 7);
-        ok &= mpz_cmp(d, a) == 0;
-        sc_fft_root_power(c, 17, 0, &m);
-        sc_fft_root_power(d, 17, 1, &m);
-        sc_fft_mul(c, c, d, &m);
-        ok &= mpz_cmp_ui(c, 1) == 0;
-        mpz_set_ui(a, 123456789);
-        mpz_mul_2exp(b, a, 11);
-        mpz_mod(b, b, p);
-        sc_fft_div_2exp(b, 11, &m);
-        ok &= mpz_cmp(a, b) == 0;
-        sc_fft_mod_clear(&m);
+        ok &= a.n == 2 && a.fermat && b.n == 1 && !b.fermat;
+        ok &= a.mod[0] == 1 && a.mod[1] == 1;
+        ok &= b.mod[0] == 2013265921UL;
     }
-    mpz_clears(p, root, a, b, c, d, t, NULL);
+    if (ok) {
+        sc_fft_mod_clear(&a);
+        sc_fft_mod_clear(&b);
+    }
     return ok;
 }
 
-static int test_crt_prime(void)
+static int test_arithmetic(void)
 {
     sc_fft_mod m;
-    mpz_t p, g, root, t;
-    int ok;
+    mp_ptr a, b, c, d, s;
+    int ok = sc_fft_mod_init(&m, 1, 64, 2, 7);
 
-    mpz_inits(p, g, root, t, NULL);
-    mpz_set_ui(p, 2013265921UL);
-    mpz_set_ui(g, 31);
-    mpz_powm_ui(root, g, 15, p);
-    ok = sc_fft_mod_init(&m, p, root, 27);
-    if (ok) {
-        sc_fft_root_power(t, (size_t)1 << 26, 0, &m);
-        mpz_add_ui(t, t, 1);
-        ok = mpz_cmp(t, p) == 0;
-        sc_fft_mod_clear(&m);
+    if (!ok)
+        return 0;
+    s = calloc((size_t)9 * m.n + 1, sizeof(mp_limb_t));
+    a = s;
+    b = a + m.n;
+    c = b + m.n;
+    d = c + m.n;
+    sc_fft_set_ui(a, 12345, &m);
+    sc_fft_set_ui(b, 6789, &m);
+    sc_fft_mul(c, a, b, &m, d + m.n);
+    ok &= sc_fft_equal_ui(c, 12345UL * 6789UL, &m);
+    sc_fft_div_2exp(c, 5, &m);
+    for (int i = 0; i < 5; i++)
+        sc_fft_add(c, c, c, &m);
+    ok &= sc_fft_equal_ui(c, 12345UL * 6789UL, &m);
+    mpn_copyi(a, m.mod, m.n);
+    mpn_sub_1(a, a, m.n, 123);
+    for (size_t e = 0; e < 128; e++) {
+        mpn_copyi(b, a, m.n);
+        for (size_t j = 0; j < e; j++)
+            sc_fft_add(b, b, b, &m);
+        sc_fft_mul_2exp(c, a, e, &m, d);
+        ok &= sc_fft_equal(b, c, &m);
     }
-    mpz_clears(p, g, root, t, NULL);
-    return ok;
-}
-
-static int test_reject_bad_root(void)
-{
-    sc_fft_mod m;
-    mpz_t p, root;
-    int ok;
-
-    mpz_inits(p, root, NULL);
-    mpz_set_ui(p, 97);
-    mpz_set_ui(root, 1);
-    ok = !sc_fft_mod_init(&m, p, root, 5);
-    mpz_clears(p, root, NULL);
+    free(s);
+    sc_fft_mod_clear(&m);
     return ok;
 }
 
 int main(void)
 {
-    if (!test_fermat_mod() || !test_crt_prime() || !test_reject_bad_root()) {
+    if (!test_moduli() || !test_arithmetic()) {
         fprintf(stderr, "fft modulus tests failed\n");
         return 1;
     }
