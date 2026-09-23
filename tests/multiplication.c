@@ -132,6 +132,33 @@ static int test_ssa_case(sc_context *ctx, sc_parent *r, size_t an, size_t bn,
     return ok;
 }
 
+static int test_ntt_case(sc_context *ctx, sc_parent *r, size_t an, size_t bn,
+                         size_t abits, size_t bbits, unsigned seed)
+{
+    sc_value *a = make_ssa_poly(ctx, r, an, abits, seed);
+    sc_value *b = make_ssa_poly(ctx, r, bn, bbits, seed + 1000);
+    sc_value *want = a && b ? sc_zz_poly_mul_classical(ctx, a, b) : NULL;
+    sc_value *got = a && b ? sc_zz_poly_mul_ntt(ctx, a, b) : NULL;
+    int ok = same_poly(want, got);
+
+    sc_value_free_many(4, a, b, want, got);
+    return ok;
+}
+
+static int test_ntt(sc_context *ctx, sc_parent *r)
+{
+    static const size_t cases[][4] = {
+        { 1, 1, 20, 19 }, { 7, 5, 90, 93 }, { 19, 23, 260, 257 },
+        { 7, 5, 700, 711 }, { 70, 65, 20, 23 }
+    };
+
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
+        if (!test_ntt_case(ctx, r, cases[i][0], cases[i][1], cases[i][2],
+                           cases[i][3], (unsigned)(23000 + i)))
+            return 0;
+    return 1;
+}
+
 static int test_ssa(sc_context *ctx, sc_parent *r)
 {
     static const size_t cases[][4] = {
@@ -483,13 +510,15 @@ int main(void)
     sc_parent r = { "PolynomialRing(ZZ)", SC_PARENT_POLY, &SC_ZZ, "x" };
 
     sc_context_init(&ctx);
-    if (!test_ssa(&ctx, &r) || !test_power(&ctx, &r) || !test_grid(&ctx, &r) ||
+    if (!test_ssa(&ctx, &r) || !test_ntt(&ctx, &r) ||
+        !test_power(&ctx, &r) || !test_grid(&ctx, &r) ||
         !test_dispatch(&ctx, &r) ||
         !test_toom3_dispatch(&ctx, &r) || !test_recursive_toom3(&ctx, &r) ||
         !test_karatsuba_dispatch(&ctx, &r) || !test_cancellation(&ctx, &r) ||
         !test_balanced_mulmid(&ctx, &r) || !test_toom63_mulmid(&ctx, &r) ||
         !test_toom63_tail(&ctx, &r) || !test_recursive_toom63(&ctx, &r) ||
-        !test_recursive_toom63_tail(&ctx, &r) || !test_mulhigh_short_tail(&ctx, &r) ||
+        !test_recursive_toom63_tail(&ctx, &r) ||
+        !test_mulhigh_short_tail(&ctx, &r) ||
         !test_mulmid(&ctx, &r)) {
         fprintf(stderr, "polynomial multiplication comparison failed: %s\n", ctx.error);
         return 1;

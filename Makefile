@@ -19,6 +19,7 @@ CORE_SOURCES = \
     src/fft_mod.c \
     src/fft.c \
     src/zz_poly_ssa.c \
+    src/zz_poly_ntt.c \
     src/poly.c \
     src/zz_poly.c \
     src/zz_poly_lr.c \
