@@ -1,0 +1,135 @@
+CC ?= cc
+BISON ?= bison
+FLEX ?= flex
+PDFLATEX ?= pdflatex
+CFLAGS ?= -O2 -g
+CPPFLAGS += -Iinclude -Ibuild
+CFLAGS += -std=c11 -Wall -Wextra -Wpedantic
+LDLIBS += -lgmp -lreadline
+
+BUILD = build
+PARSER_C = $(BUILD)/parser.c
+PARSER_H = $(BUILD)/parser.h
+LEXER_C = $(BUILD)/lexer.c
+
+CORE_SOURCES = \
+    src/value.c \
+    src/memory.c \
+    src/zz.c \
+    src/poly.c \
+    src/zz_poly.c \
+    src/zz_poly_lr.c \
+    src/zz_poly_dispatch.c
+
+SOURCES = \
+    $(CORE_SOURCES) \
+    src/env.c \
+    src/dispatch.c \
+    src/repl_cmd.c \
+    src/repl.c
+
+OBJECTS = $(SOURCES:src/%.c=$(BUILD)/%.o) $(BUILD)/parser.o $(BUILD)/lexer.o
+CORE_OBJECTS = $(CORE_SOURCES:src/%.c=$(BUILD)/%.o)
+MUL_TEST = $(BUILD)/test_multiplication
+DIV_TEST = $(BUILD)/test_division
+GCD_TEST = $(BUILD)/test_gcd_resultant
+UNPACK_TEST = $(BUILD)/test_unpacking
+EVAL_TEST = $(BUILD)/test_evaluation
+COMP_TEST = $(BUILD)/test_composition
+CALC_TEST = $(BUILD)/test_calculus
+STRUCT_TEST = $(BUILD)/test_structural
+TAYLOR_TEST = $(BUILD)/test_taylor_shift
+
+.PHONY: all clean pdf check check-lines check-functions test test-core
+
+all: smallcas
+
+pdf: algorithms.pdf
+
+algorithms.pdf: algorithms.tex | $(BUILD)
+	mkdir -p $(BUILD)/latex
+	$(PDFLATEX) -interaction=nonstopmode -halt-on-error \
+		-output-directory=$(BUILD)/latex algorithms.tex
+	$(PDFLATEX) -interaction=nonstopmode -halt-on-error \
+		-output-directory=$(BUILD)/latex algorithms.tex
+	$(PDFLATEX) -interaction=nonstopmode -halt-on-error \
+		-output-directory=$(BUILD)/latex algorithms.tex
+	cp $(BUILD)/latex/algorithms.pdf $@
+
+smallcas: $(OBJECTS)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(OBJECTS) $(LDLIBS) -o $@
+
+$(PARSER_C): src/parser.y | $(BUILD)
+	$(BISON) -Wall -d -o $(PARSER_C) src/parser.y
+
+$(PARSER_H): $(PARSER_C)
+	@test -f $@ || $(BISON) -Wall -d -o $(PARSER_C) src/parser.y
+
+$(LEXER_C): src/lexer.l $(PARSER_H) | $(BUILD)
+	$(FLEX) -o $@ src/lexer.l
+
+$(BUILD)/parser.o: $(PARSER_C) $(PARSER_H)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $(PARSER_C) -o $@
+
+$(BUILD)/lexer.o: $(LEXER_C) $(PARSER_H)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $(LEXER_C) -o $@
+
+$(BUILD)/%.o: src/%.c | $(BUILD)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+
+$(MUL_TEST): tests/multiplication.c $(CORE_OBJECTS) | $(BUILD)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -lgmp -o $@
+
+$(DIV_TEST): tests/division.c $(CORE_OBJECTS) | $(BUILD)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -lgmp -o $@
+
+$(GCD_TEST): tests/gcd_resultant.c $(CORE_OBJECTS) | $(BUILD)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -lgmp -o $@
+
+$(UNPACK_TEST): tests/unpacking.c $(CORE_OBJECTS) $(BUILD)/env.o | $(BUILD)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -lgmp -o $@
+
+$(EVAL_TEST): tests/evaluation.c $(CORE_OBJECTS) $(BUILD)/env.o $(BUILD)/dispatch.o | $(BUILD)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -lgmp -o $@
+
+$(COMP_TEST): tests/composition.c $(CORE_OBJECTS) $(BUILD)/env.o $(BUILD)/dispatch.o | $(BUILD)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -lgmp -o $@
+
+$(CALC_TEST): tests/calculus.c $(CORE_OBJECTS) $(BUILD)/env.o $(BUILD)/dispatch.o | $(BUILD)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -lgmp -o $@
+
+$(STRUCT_TEST): tests/structural.c $(CORE_OBJECTS) $(BUILD)/env.o $(BUILD)/dispatch.o | $(BUILD)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -lgmp -o $@
+
+$(TAYLOR_TEST): tests/taylor_shift.c $(CORE_OBJECTS) $(BUILD)/env.o $(BUILD)/dispatch.o | $(BUILD)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -lgmp -o $@
+
+$(BUILD):
+	mkdir -p $(BUILD)
+
+check: check-lines check-functions
+
+check-lines:
+	@awk 'length($$0) > 100 { print FILENAME ":" FNR ": " length($$0); bad=1 } \
+	END { exit bad }' include/*.h src/*.c src/*.l src/*.y tests/* tools/*.awk Makefile README.md
+
+check-functions:
+	@awk -f tools/check-functions.awk src/zz.c src/poly.c src/zz_poly.c
+
+test-core: $(MUL_TEST) $(DIV_TEST) $(GCD_TEST) $(UNPACK_TEST) $(EVAL_TEST) \
+	$(COMP_TEST) $(CALC_TEST) $(STRUCT_TEST) $(TAYLOR_TEST)
+	@$(MUL_TEST)
+	@$(DIV_TEST)
+	@$(GCD_TEST)
+	@$(UNPACK_TEST)
+	@$(EVAL_TEST)
+	@$(COMP_TEST)
+	@$(CALC_TEST)
+	@$(STRUCT_TEST)
+	@$(TAYLOR_TEST)
+
+test: smallcas test-core
+	@sh tests/smoke.sh
+
+clean:
+	rm -rf $(BUILD) smallcas
