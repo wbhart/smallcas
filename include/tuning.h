@@ -19,14 +19,14 @@ extern size_t sc_tune_mul_ssa_cutoff;
 #define SC_MUL_NTT_CUTOFF sc_tune_mul_ntt_cutoff
 #define SC_MUL_SSA_CUTOFF sc_tune_mul_ssa_cutoff
 #else
-#define SC_MUL_KS_CUTOFF ((size_t)16)
-#define SC_MUL_TOOM3_CUTOFF ((size_t)48)
-#define SC_MUL_KARATSUBA_CUTOFF ((size_t)12)
+#define SC_MUL_KS_CUTOFF ((size_t)11)
+#define SC_MUL_TOOM3_CUTOFF ((size_t)24)
+#define SC_MUL_KARATSUBA_CUTOFF ((size_t)69)
 #define SC_MUL_KARATSUBA_LOW_BITS ((size_t)128)
-#define SC_MUL_KARATSUBA_LOW_BITS_CUTOFF ((size_t)24)
-/* NTT uses shorter length / number of CRT primes; transforms start disabled. */
-#define SC_MUL_NTT_CUTOFF ((size_t)-1)
-#define SC_MUL_SSA_CUTOFF ((size_t)-1)
+#define SC_MUL_KARATSUBA_LOW_BITS_CUTOFF ((size_t)91)
+/* NTT uses shorter length / number of CRT primes. */
+#define SC_MUL_NTT_CUTOFF ((size_t)1748)
+#define SC_MUL_SSA_CUTOFF ((size_t)180)
 #endif
 
 #define SC_MULLOW_DC_CUTOFF ((size_t)16)

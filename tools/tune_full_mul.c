@@ -235,7 +235,7 @@ int main(void)
     sc_parent r = { "PolynomialRing(ZZ)", SC_PARENT_POLY, &SC_ZZ, "x" };
     gmp_randstate_t state;
     tune_result ks, kar, low, toom, ntt, ssa;
-    size_t ntt_cut;
+    size_t ntt_cut, toom_fallback;
 
     sc_context_init(&ctx);
     gmp_randinit_default(state);
@@ -245,19 +245,21 @@ int main(void)
 
     puts("Full multiplication tuning: 5% loss/win bracket, midpoint cutoff, 1% MAD.");
     ks = tune_pair(&ctx, &r, state, "classical -> Kronecker (8-bit coefficients)",
-                   sc_zz_poly_mul_classical, mul_ks, 8, 0, 8, 256, 16);
+                   sc_zz_poly_mul_classical, mul_ks, 8, 0, 8, 256,
+                   sc_tune_mul_ks_cutoff);
     sc_tune_mul_ks_cutoff = ks.cut;
     kar = tune_pair(&ctx, &r, state, "classical -> Karatsuba (256-bit coefficients)",
                     sc_zz_poly_mul_classical, sc_zz_poly_mul_karatsuba,
-                    256, 0, 4, 256, 12);
+                    256, 0, 4, 256, sc_tune_mul_karatsuba_cutoff);
     sc_tune_mul_karatsuba_cutoff = kar.cut;
     low = tune_pair(&ctx, &r, state, "classical -> Karatsuba (64-bit coefficients)",
                     sc_zz_poly_mul_classical, sc_zz_poly_mul_karatsuba,
-                    64, 0, 8, 384, 24);
+                    64, 0, 8, 384, sc_tune_mul_karatsuba_low_bits_cutoff);
     sc_tune_mul_karatsuba_low_bits_cutoff = low.cut;
+    toom_fallback = sc_tune_mul_toom3_cutoff;
     sc_tune_mul_toom3_cutoff = (size_t)-1;
     toom = tune_pair(&ctx, &r, state, "lower dispatcher -> Toom-3 (256-bit coefficients)",
-                     sc_zz_poly_mul, mul_toom3, 256, 0, 24, 768, 48);
+                     sc_zz_poly_mul, mul_toom3, 256, 0, 24, 768, toom_fallback);
     sc_tune_mul_toom3_cutoff = toom.cut;
     ntt = tune_pair(&ctx, &r, state, "lower dispatcher -> CRT-NTT (48-bit coefficients)",
                     sc_zz_poly_mul, sc_zz_poly_mul_ntt, 48, 0, 96, 16384, (size_t)-1);
