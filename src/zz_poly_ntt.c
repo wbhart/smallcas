@@ -77,6 +77,14 @@ static int sc_ntt_params(size_t *np, unsigned *logn,
     return *np <= sizeof(sc_ntt_primes) / sizeof(sc_ntt_primes[0]);
 }
 
+size_t sc_zz_poly_ntt_nprimes(const sc_value *a, const sc_value *b)
+{
+    size_t np;
+    unsigned logn;
+
+    return sc_ntt_params(&np, &logn, a, b) ? np : 0;
+}
+
 static mp_limb_t sc_ntt_mulmod(mp_limb_t a, mp_limb_t b, mp_limb_t p)
 {
     mp_limb_t t[2];

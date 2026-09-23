@@ -76,7 +76,7 @@ static int sc_zz_poly_use_ks(const sc_value *a, const sc_value *b)
     size_t bits_b = sc_zz_poly_max_abs_bits_raw(b);
     size_t bits = bits_a > bits_b ? bits_a : bits_b;
 
-    return small >= 16 && bits < small;
+    return small >= SC_MUL_KS_CUTOFF && bits < small;
 }
 
 static int sc_zz_poly_use_toom3(const sc_value *a, const sc_value *b)
@@ -84,7 +84,7 @@ static int sc_zz_poly_use_toom3(const sc_value *a, const sc_value *b)
     size_t an = a->data.zz_poly.length, bn = b->data.zz_poly.length;
     size_t small = an < bn ? an : bn, large = an > bn ? an : bn;
 
-    return small >= 48 && large <= small + small / 2;
+    return small >= SC_MUL_TOOM3_CUTOFF && large <= small + small / 2;
 }
 
 static int sc_zz_poly_use_karatsuba(const sc_value *a, const sc_value *b)
@@ -93,14 +93,51 @@ static int sc_zz_poly_use_karatsuba(const sc_value *a, const sc_value *b)
     size_t small = an < bn ? an : bn, large = an > bn ? an : bn;
     size_t bits_a, bits_b, bits;
 
-    if (small < 12 || large > 2 * small)
+    if (large > 2 * small)
         return 0;
     bits_a = sc_zz_poly_max_abs_bits_raw(a);
     bits_b = sc_zz_poly_max_abs_bits_raw(b);
     bits = bits_a > bits_b ? bits_a : bits_b;
-    if (bits < 128 && small < 24)
+    if (bits < SC_MUL_KARATSUBA_LOW_BITS)
+        return small >= SC_MUL_KARATSUBA_LOW_BITS_CUTOFF;
+    return small >= SC_MUL_KARATSUBA_CUTOFF;
+}
+
+static int sc_zz_poly_balanced(const sc_value *a, const sc_value *b)
+{
+    size_t an = a->data.zz_poly.length, bn = b->data.zz_poly.length;
+    size_t small = an < bn ? an : bn, large = an > bn ? an : bn;
+
+    return large <= small + small / 2;
+}
+
+static int sc_zz_poly_use_ntt(const sc_value *a, const sc_value *b)
+{
+    size_t an = a->data.zz_poly.length, bn = b->data.zz_poly.length;
+    size_t small = an < bn ? an : bn, np, ba, bb, bits;
+
+    if (small < SC_MUL_NTT_CUTOFF || !sc_zz_poly_balanced(a, b))
         return 0;
-    return 1;
+    ba = sc_zz_poly_max_abs_bits_raw(a);
+    bb = sc_zz_poly_max_abs_bits_raw(b);
+    bits = ba > bb ? ba : bb;
+    if (bits >= small)
+        return 0;
+    np = sc_zz_poly_ntt_nprimes(a, b);
+    return np != 0 && small / np >= SC_MUL_NTT_CUTOFF;
+}
+
+static int sc_zz_poly_use_ssa(const sc_value *a, const sc_value *b)
+{
+    size_t an = a->data.zz_poly.length, bn = b->data.zz_poly.length;
+    size_t small = an < bn ? an : bn, ba, bb, bits;
+
+    if (small < SC_MUL_SSA_CUTOFF || !sc_zz_poly_balanced(a, b))
+        return 0;
+    ba = sc_zz_poly_max_abs_bits_raw(a);
+    bb = sc_zz_poly_max_abs_bits_raw(b);
+    bits = ba > bb ? ba : bb;
+    return bits >= small;
 }
 
 sc_value *sc_zz_poly_add(sc_context *ctx, const sc_value *a, const sc_value *b)
@@ -125,6 +162,10 @@ sc_value *sc_zz_poly_mul(sc_context *ctx, const sc_value *a, const sc_value *b)
         return sc_zz_poly_mul_classical(ctx, a, b);
     if (a->data.zz_poly.length == 1 || b->data.zz_poly.length == 1)
         return sc_zz_poly_mul_constant(ctx, a, b);
+    if (sc_zz_poly_use_ntt(a, b))
+        return sc_zz_poly_mul_ntt(ctx, a, b);
+    if (sc_zz_poly_use_ssa(a, b))
+        return sc_zz_poly_mul_ssa(ctx, a, b);
     if (sc_zz_poly_use_ks(a, b))
         return sc_zz_poly_mul_ks(ctx, a, b, sc_zz_poly_ks_bits(a, b));
     if (sc_zz_poly_use_toom3(a, b)) {
@@ -155,7 +196,7 @@ sc_value *sc_zz_poly_mullow(sc_context *ctx, const sc_value *a, const sc_value *
     total = an + bn - 1;
     if (n >= total)
         return sc_zz_poly_mul(ctx, a, b);
-    if (n <= 16)
+    if (n <= SC_MULLOW_DC_CUTOFF)
         return sc_zz_poly_mullow_classical(ctx, a, b, n);
     return sc_zz_poly_mullow_dc(ctx, a, b, n);
 }
@@ -184,9 +225,9 @@ sc_value *sc_zz_poly_mulmid_balanced(sc_context *ctx, const sc_value *a,
         return NULL;
     if (n == 0 || a->data.zz_poly.length == 0 || b->data.zz_poly.length == 0)
         return sc_value_new_zz_poly_checked(ctx, a->parent, 0);
-    if (n <= 16)
+    if (n <= SC_MULMID_CLASSICAL_CUTOFF)
         return sc_zz_poly_mulmid_classical(ctx, a, b, n - 1, n);
-    if (n >= 48) {
+    if (n >= SC_MULMID_TOOM63_CUTOFF) {
         sc_zz_poly_toom63_ws ws;
 
         if (n % 3 != 0)
@@ -232,7 +273,8 @@ sc_value *sc_zz_poly_mulmid(sc_context *ctx, const sc_value *a, const sc_value *
         return sc_zz_poly_mulmid_balanced(ctx, &view, a, count);
     }
     small = an < bn ? an : bn;
-    if (count <= 24 || small <= 24)
+    if (count <= SC_MULMID_GENERAL_CLASSICAL_CUTOFF ||
+        small <= SC_MULMID_GENERAL_CLASSICAL_CUTOFF)
         return sc_zz_poly_mulmid_classical(ctx, a, b, start, count);
     p = sc_zz_poly_mul(ctx, a, b);
     if (p == NULL)
@@ -254,7 +296,7 @@ sc_value *sc_zz_poly_inv_series(sc_context *ctx, const sc_value *a, size_t n)
         sc_set_error(ctx, "series inverse requires constant coefficient +/-1");
         return NULL;
     }
-    if (n <= 16)
+    if (n <= SC_INV_SERIES_NEWTON_CUTOFF)
         return sc_zz_poly_inv_series_classical(ctx, a, n);
     return sc_zz_poly_inv_series_newton(ctx, a, n);
 }
@@ -291,7 +333,7 @@ sc_value *sc_zz_poly_divrem_full(sc_context *ctx,
     size_t an = a->data.zz_poly.length, bn = b->data.zz_poly.length;
     size_t qn = an >= bn ? an - bn + 1 : 0;
 
-    if (qn >= 32 && bn > 1)
+    if (qn >= SC_DIVREM_DC_CUTOFF && bn > 1)
         return sc_zz_poly_divrem_dc(ctx, a, b);
     return sc_zz_poly_divrem_classical(ctx, a, b);
 }
@@ -334,9 +376,9 @@ sc_value *sc_zz_poly_quo(sc_context *ctx, const sc_value *a, const sc_value *b)
     }
     an = a->data.zz_poly.length;
     qn = an >= bn ? an - bn + 1 : 0;
-    if (qn >= 64 && bn > 1 && sc_zz_poly_unit_lead(b))
+    if (qn >= SC_QUO_NEWTON_CUTOFF && bn > 1 && sc_zz_poly_unit_lead(b))
         return sc_zz_poly_quo_newton(ctx, a, b);
-    if (qn >= 32 && bn > 1)
+    if (qn >= SC_QUO_DC_CUTOFF && bn > 1)
         return sc_zz_poly_quo_dc(ctx, a, b);
     return sc_zz_poly_quo_classical(ctx, a, b);
 }
@@ -354,9 +396,9 @@ sc_value *sc_zz_poly_divrem(sc_context *ctx, const sc_value *a, const sc_value *
     }
     an = a->data.zz_poly.length;
     qn = an >= bn ? an - bn + 1 : 0;
-    if (qn >= 64 && bn > 1 && sc_zz_poly_unit_lead(b))
+    if (qn >= SC_QUO_NEWTON_CUTOFF && bn > 1 && sc_zz_poly_unit_lead(b))
         return sc_zz_poly_divrem_newton(ctx, a, b);
-    if (qn >= 32 && bn > 1)
+    if (qn >= SC_DIVREM_DC_CUTOFF && bn > 1)
         return sc_zz_poly_divrem_dc(ctx, a, b);
     return sc_zz_poly_divrem_classical(ctx, a, b);
 }
@@ -394,7 +436,7 @@ sc_value *sc_zz_poly_divexact(sc_context *ctx, const sc_value *a, const sc_value
     }
     an = a->data.zz_poly.length;
     qn = an >= bn ? an - bn + 1 : 0;
-    if (qn < 32 || sc_zz_poly_unit_lead(b))
+    if (qn < SC_DIVEXACT_BIDIR_CUTOFF || sc_zz_poly_unit_lead(b))
         return sc_zz_poly_divexact_via_divrem(ctx, a, b);
     v = sc_zz_poly_valuation(b);
     if (!sc_zz_poly_zero_prefix(a, v)) {
@@ -538,7 +580,8 @@ sc_value *sc_zz_poly_evaluate(sc_context *ctx, const sc_value *a, const sc_value
 {
     if (a == NULL || b == NULL)
         return NULL;
-    if (a->data.zz_poly.length < 16 || mpz_cmpabs_ui(b->data.z, 1) <= 0)
+    if (a->data.zz_poly.length < SC_EVALUATE_DC_CUTOFF ||
+        mpz_cmpabs_ui(b->data.z, 1) <= 0)
         return sc_zz_poly_evaluate_horner_impl(ctx, a, b);
     return sc_zz_poly_evaluate_divconquer_impl(ctx, a, b);
 }
@@ -563,7 +606,8 @@ sc_value *sc_zz_poly_compose(sc_context *ctx, const sc_value *a, const sc_value 
 {
     if (a == NULL || b == NULL)
         return NULL;
-    if (a->data.zz_poly.length < 8 || b->data.zz_poly.length <= 1)
+    if (a->data.zz_poly.length < SC_COMPOSE_DC_CUTOFF ||
+        b->data.zz_poly.length <= 1)
         return sc_zz_poly_compose_horner_impl(ctx, a, b);
     return sc_zz_poly_compose_divconquer_impl(ctx, a, b);
 }
@@ -589,7 +633,8 @@ sc_value *sc_zz_poly_taylor_shift(sc_context *ctx, const sc_value *a,
 {
     if (a == NULL || b == NULL)
         return NULL;
-    if (a->data.zz_poly.length < 4096 || mpz_cmpabs_ui(b->data.z, 1) <= 0)
+    if (a->data.zz_poly.length < SC_TAYLOR_DC_CUTOFF ||
+        mpz_cmpabs_ui(b->data.z, 1) <= 0)
         return sc_zz_poly_taylor_shift_horner_impl(ctx, a, b);
     return sc_zz_poly_taylor_shift_divconquer_impl(ctx, a, b);
 }

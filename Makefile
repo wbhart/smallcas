@@ -45,8 +45,10 @@ STRUCT_TEST = $(BUILD)/test_structural
 TAYLOR_TEST = $(BUILD)/test_taylor_shift
 FFT_MOD_TEST = $(BUILD)/test_fft_mod
 FFT_TEST = $(BUILD)/test_fft
+TUNE_MUL = $(BUILD)/tune_full_mul
+TUNE_CORE_OBJECTS = $(CORE_SOURCES:src/%.c=$(BUILD)/tune/%.o) $(BUILD)/tune/tuning.o
 
-.PHONY: all clean pdf check check-lines check-functions test test-core
+.PHONY: all clean pdf check check-lines check-functions test test-core tune-mul
 
 all: smallcas
 
@@ -82,6 +84,15 @@ $(BUILD)/lexer.o: $(LEXER_C) $(PARSER_H)
 
 $(BUILD)/%.o: src/%.c | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/tune/%.o: src/%.c | $(BUILD)/tune
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DSC_TUNE -c $< -o $@
+
+$(TUNE_MUL): tools/tune_full_mul.c $(TUNE_CORE_OBJECTS) | $(BUILD)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DSC_TUNE $^ -lgmp -lm -o $@
+
+tune-mul: $(TUNE_MUL)
+	@$(TUNE_MUL)
 
 $(MUL_TEST): tests/multiplication.c $(CORE_OBJECTS) | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -lgmp -o $@
@@ -119,11 +130,15 @@ $(FFT_TEST): tests/fft.c $(BUILD)/fft_mod.o $(BUILD)/fft.o | $(BUILD)
 $(BUILD):
 	mkdir -p $(BUILD)
 
+$(BUILD)/tune: | $(BUILD)
+	mkdir -p $(BUILD)/tune
+
 check: check-lines check-functions
 
 check-lines:
 	@awk 'length($$0) > 100 { print FILENAME ":" FNR ": " length($$0); bad=1 } \
-	END { exit bad }' include/*.h src/*.c src/*.l src/*.y tests/* tools/*.awk Makefile README.md
+	END { exit bad }' include/*.h src/*.c src/*.l src/*.y tests/* tools/*.awk tools/*.c \
+	Makefile README.md
 
 check-functions:
 	@awk -f tools/check-functions.awk src/zz.c src/poly.c src/zz_poly.c

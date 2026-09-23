@@ -197,7 +197,7 @@ sc_value *sc_zz_poly_mullow_dc(sc_context *ctx, const sc_value *a,
     sc_value b0 = sc_zz_poly_view(b, 0, k), b1 = sc_zz_poly_view(b, k, h);
     sc_value *z0, *z1, *z2, *r;
 
-    if (n <= 16)
+    if (n <= SC_MULLOW_DC_CUTOFF)
         return sc_zz_poly_mullow_classical(ctx, a, b, n);
     z0 = sc_zz_poly_mul(ctx, &a0, &b0);
     z1 = sc_zz_poly_mullow(ctx, &a0, &b1, h);
@@ -812,7 +812,7 @@ sc_value *sc_zz_poly_series_quo_dc(sc_context *ctx, const sc_value *a,
     sc_value av = sc_zz_poly_view(a, 0, k), bv = sc_zz_poly_view(b, 0, n);
     sc_value *q0, *p, *e, *q1, *r;
 
-    if (n <= 16)
+    if (n <= SC_SERIES_QUO_DC_CUTOFF)
         return sc_zz_poly_series_quo_classical(ctx, a, b, n);
     q0 = sc_zz_poly_series_quo_dc(ctx, &av, &bv, k);
     p = q0 == NULL ? NULL : sc_zz_poly_mulmid(ctx, &bv, q0, k, h);
@@ -863,7 +863,7 @@ sc_value *sc_zz_poly_inv_series_newton(sc_context *ctx, const sc_value *a,
     size_t m = (n + 1) / 2, h = n - m, i;
     sc_value *g, *e, *c, *r;
 
-    if (n <= 16)
+    if (n <= SC_INV_SERIES_NEWTON_CUTOFF)
         return sc_zz_poly_inv_series_classical(ctx, a, n);
     g = sc_zz_poly_inv_series_newton(ctx, a, m);
     e = g == NULL ? NULL : sc_zz_poly_mulmid(ctx, a, g, m, h);
@@ -892,7 +892,7 @@ sc_value *sc_zz_poly_series_quo_newton(sc_context *ctx, const sc_value *a,
     size_t m = (n + 1) / 2, h = n - m, i;
     sc_value *g, *q0, *p, *e, *q1, *q;
 
-    if (n <= 16)
+    if (n <= SC_SERIES_QUO_NEWTON_CUTOFF)
         return sc_zz_poly_series_quo_classical(ctx, a, b, n);
     g = sc_zz_poly_inv_series(ctx, b, m);
     q0 = g == NULL ? NULL : sc_zz_poly_mullow(ctx, a, g, m);
@@ -1017,7 +1017,7 @@ sc_value *sc_zz_poly_quo_bidirectional(sc_context *ctx,
     sc_value bv = sc_zz_poly_view(b, bn - rn, rn);
     sc_value *lo, *ar, *br, *hir, *hi, *q;
 
-    if (qn <= 16)
+    if (qn <= SC_BIDIR_QUO_CUTOFF)
         return sc_zz_poly_quo_classical(ctx, a, b);
     lo = sc_zz_poly_series_quo_dc(ctx, a, b, ln);
     ar = sc_zz_poly_reverse_impl(ctx, &av, hn);
@@ -1046,7 +1046,7 @@ sc_value *sc_zz_poly_quo_mulders_balanced(sc_context *ctx,
     sc_value b3 = sc_zz_poly_view(b, n1, n2);
     sc_value *u, *qr1, *h, *t, *q2, *q;
 
-    if (n <= 16)
+    if (n <= SC_MULDERS_QUO_CUTOFF)
         return sc_zz_poly_quo_classical(ctx, a, b);
     u = sc_value_new_zz_poly_checked(ctx, a->parent, 2 * n1 - 1);
     if (u == NULL)
@@ -1545,7 +1545,7 @@ sc_value *sc_zz_poly_gcd_hgcd_impl(sc_context *ctx, const sc_value *a,
         v = p;
     }
     while (SC_ZN(v) != 0) {
-        if (SC_ZN(u) <= 12 || SC_ZN(u) == SC_ZN(v)) {
+        if (SC_ZN(u) <= SC_HGCD_BASE_CUTOFF || SC_ZN(u) == SC_ZN(v)) {
             qr = sc_zz_poly_pseudodiv_fast(ctx, u, v);
             p = sc_value_pair_take(qr, 1);
             sc_value_free(u);

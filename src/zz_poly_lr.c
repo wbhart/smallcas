@@ -383,7 +383,7 @@ sc_value *sc_zz_poly_gcd_lr_impl(sc_context *ctx, const sc_value *a,
     if (!qpoly_set(ctx, &u, pa) || !qpoly_set(ctx, &v, pb))
         goto fail;
     while (QN(&v) != 0) {
-        if (QN(&u) <= 12 || QN(&u) == QN(&v)) {
+        if (QN(&u) <= SC_HGCD_BASE_CUTOFF || QN(&u) == QN(&v)) {
             if (!qpoly_divrem(ctx, &q, &rem, &u, &v))
                 goto fail;
             qpoly_clear(&u);

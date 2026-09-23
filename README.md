@@ -37,6 +37,19 @@ Makefile does not pin a GMP release.
 `make test-core` tests polynomial arithmetic, evaluation, division, gcd/resultant and
 tuple unpacking without requiring Bison, Flex or Readline.
 
+## Tuning
+
+Algorithm thresholds live in `include/tuning.h`.  Normal builds use compile-time
+constants.  `make tune-mul` builds a separate `SC_TUNE` core in which the full-product
+cutoffs are writable variables, then does a deliberately coarse balanced-product tune.
+Each point alternates the two algorithms, uses paired timing ratios, aims for 1% MAD,
+and brackets the crossover between a 5% loss and a 5% win.  The reported cutoff is
+the midpoint.  The NTT cutoff is measured as shorter length per CRT prime.
+
+The initial NTT and SSA dispatch cutoffs are disabled until they have been tuned on the
+target machine.  The tuner prints a ready-to-paste block for the full-product entries in
+`tuning.h`; other thresholds are centralized there but are not tuned by this target.
+
 ## Example
 
 ```text
