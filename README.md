@@ -39,16 +39,21 @@ tuple unpacking without requiring Bison, Flex or Readline.
 
 ## Tuning
 
-Algorithm thresholds live in `include/tuning.h`.  Normal builds use compile-time
-constants.  `make tune-mul` builds a separate `SC_TUNE` core in which the full-product
-cutoffs are writable variables, then does a deliberately coarse balanced-product tune.
-Each point alternates the two algorithms, uses paired timing ratios, aims for 1% MAD,
-and brackets the crossover between a 5% loss and a 5% win.  The reported cutoff is
-the midpoint.  The NTT cutoff is measured as shorter length per CRT prime.
+Tracked fallback thresholds live in `include/tuning_defaults.h`.  `include/tuning.h`
+is a machine-local overlay, is ignored by Git, and is created automatically with no
+overrides if it is missing.  This lets patches add new defaults without overwriting a
+machine's measured values.
 
-The initial NTT and SSA dispatch cutoffs are disabled until they have been tuned on the
-target machine.  The tuner prints a ready-to-paste block for the full-product entries in
-`tuning.h`; other thresholds are centralized there but are not tuned by this target.
+`make tune-mul` builds a separate `SC_TUNE` core in which the full-product and SSA MFA
+cutoffs are writable variables.  Each multiplication point alternates the two algorithms,
+uses paired timing ratios, aims for 1% MAD, and brackets the crossover between a 5% loss
+and a 5% win.  The NTT cutoff is measured as shorter length per CRT prime.  MFA is timed
+at successive transform depths on the minimum-size Fermat ring allowed by SSA, using a
+forward-plus-inverse round trip; if no 5% MFA win is found through depth 15 it is disabled.
+
+Only after every tuning stage succeeds does the tuner atomically replace
+`include/tuning.h` with the measured full-product and MFA values.  Subsequent source
+patches should therefore change `tuning_defaults.h`, not the local `tuning.h`.
 
 ## Example
 

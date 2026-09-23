@@ -1,9 +1,13 @@
 #define _POSIX_C_SOURCE 200809L
 #include "smallcas.h"
+#include "smallcas_fft.h"
 
+#include <limits.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 #include <time.h>
 
 typedef sc_value *(*mul_fn)(sc_context *, const sc_value *, const sc_value *);
@@ -174,6 +178,204 @@ static size_t next_size(size_t n)
     return n + (d != 0 ? d : 1);
 }
 
+typedef struct {
+    sc_fft_mod m;
+    sc_fft_plan p;
+    mp_ptr a, scratch;
+} fft_case;
+
+static int fft_case_init(fft_case *c, unsigned logn)
+{
+    mp_bitcnt_t bits = (mp_bitcnt_t)1 << (logn - 1);
+    size_t words;
+
+    memset(c, 0, sizeof(*c));
+    if (!sc_fft_mod_init(&c->m, 1, bits, 2, logn) ||
+        !sc_fft_plan_init(&c->p, logn, &c->m))
+        goto fail;
+    if (c->p.len > SIZE_MAX / (size_t)c->m.n)
+        goto fail;
+    words = c->p.len * (size_t)c->m.n;
+    c->a = calloc(words, sizeof(mp_limb_t));
+    c->scratch = calloc(4 * (size_t)c->m.n + 1, sizeof(mp_limb_t));
+    if (c->a == NULL || c->scratch == NULL)
+        goto fail;
+    for (size_t i = 0; i < c->p.len; i++)
+        sc_fft_set_ui(sc_fft_entry(c->a, i, &c->m),
+                      (mp_limb_t)(1103515245u * (unsigned)i + 12345u), &c->m);
+    return 1;
+fail:
+    free(c->scratch);
+    free(c->a);
+    sc_fft_plan_clear(&c->p);
+    sc_fft_mod_clear(&c->m);
+    memset(c, 0, sizeof(*c));
+    return 0;
+}
+
+static void fft_case_clear(fft_case *c)
+{
+    free(c->scratch);
+    free(c->a);
+    sc_fft_plan_clear(&c->p);
+    sc_fft_mod_clear(&c->m);
+}
+
+static void fft_roundtrip(fft_case *c, int mfa)
+{
+    if (mfa) {
+        sc_fft_forward_mfa(c->a, &c->p, &c->m, c->scratch);
+        sc_fft_inverse_mfa(c->a, &c->p, &c->m, c->scratch);
+    } else {
+        sc_fft_forward(c->a, &c->p, &c->m, c->scratch);
+        sc_fft_inverse(c->a, &c->p, &c->m, c->scratch);
+    }
+}
+
+static double fft_run(fft_case *c, int mfa, size_t reps)
+{
+    double t = now();
+
+    for (size_t i = 0; i < reps; i++)
+        fft_roundtrip(c, mfa);
+    return now() - t;
+}
+
+static double fft_pair_sample(fft_case *c, size_t reps, int reverse)
+{
+    double ta = 0.0, tb = 0.0;
+
+    for (size_t i = 0; i < reps; i++) {
+        double t;
+
+        if ((i ^ (size_t)reverse) & 1) {
+            t = now(), fft_roundtrip(c, 1), tb += now() - t;
+            t = now(), fft_roundtrip(c, 0), ta += now() - t;
+        } else {
+            t = now(), fft_roundtrip(c, 0), ta += now() - t;
+            t = now(), fft_roundtrip(c, 1), tb += now() - t;
+        }
+    }
+    return tb / ta;
+}
+
+static double fft_ratio(fft_case *c, double *relmad)
+{
+    double v[15], d[15], ta, tb, med;
+    size_t reps = 1, ns = 0;
+
+    while (reps < 4096) {
+        ta = fft_run(c, 0, reps);
+        tb = fft_run(c, 1, reps);
+        if (ta + tb >= 0.010)
+            break;
+        reps <<= 1;
+    }
+    for (ns = 0; ns < 15; ns++) {
+        v[ns] = fft_pair_sample(c, reps, (int)(ns & 1));
+        if (ns >= 4) {
+            double q[15];
+
+            for (size_t i = 0; i <= ns; i++)
+                q[i] = v[i];
+            med = median(q, ns + 1);
+            for (size_t i = 0; i <= ns; i++)
+                d[i] = fabs(v[i] - med);
+            *relmad = median(d, ns + 1) / med;
+            if (*relmad <= 0.01)
+                return med;
+        }
+    }
+    med = median(v, ns);
+    for (size_t i = 0; i < ns; i++)
+        d[i] = fabs(v[i] - med);
+    *relmad = median(d, ns) / med;
+    return med;
+}
+
+static unsigned tune_mfa(void)
+{
+    unsigned loss = 0, win = 0, cut = UINT_MAX;
+
+    puts("\nSSA radix-2 -> MFA: minimum SSA Fermat ring, forward+inverse.");
+    for (unsigned logn = SC_FFT_MFA_BASE_LOG + 1; logn <= 15; logn++) {
+        fft_case c;
+        double mad = 0.0, q, mib;
+
+        if (!fft_case_init(&c, logn)) {
+            fprintf(stderr, "out of memory while tuning MFA at logN=%u\n", logn);
+            exit(1);
+        }
+        mib = (double)c.p.len * (double)c.m.n * sizeof(mp_limb_t) / 1048576.0;
+        q = fft_ratio(&c, &mad);
+        printf("  logN=%-2u N=%-6zu vector=%7.1f MiB MFA/radix=%7.4f MAD=%5.2f%%\n",
+               logn, c.p.len, mib, q, 100.0 * mad);
+        fft_case_clear(&c);
+        if (q >= 1.05)
+            loss = logn;
+        else if (q <= 0.95) {
+            win = logn;
+            cut = loss != 0 ? (loss + win + 1) / 2 : win;
+            break;
+        }
+    }
+    if (win == 0)
+        puts("  no 5% MFA win through logN=15; disabling MFA");
+    else if (loss == 0)
+        printf("  already >5%% faster at first winning depth; cutoff <= %u\n", cut);
+    else
+        printf("  5%% bracket [%u, %u], cutoff depth %u\n", loss, win, cut);
+    return cut;
+}
+
+static int write_tuning(const tune_result *ks, const tune_result *toom,
+                        const tune_result *kar, const tune_result *low,
+                        const tune_result *ntt, size_t ntt_cut,
+                        const tune_result *ssa, unsigned mfa_cut)
+{
+    const char *tmp = "include/tuning.h.tmp";
+    const char *dst = "include/tuning.h";
+    FILE *f = fopen(tmp, "w");
+    int bad;
+
+    if (f == NULL) {
+        perror(tmp);
+        return 0;
+    }
+    fputs("/* Machine-local; generated by make tune-mul. */\n", f);
+    fputs("#ifndef SMALLCAS_TUNING_LOCAL_H\n#define SMALLCAS_TUNING_LOCAL_H\n\n", f);
+    fputs("#ifndef SC_TUNE\n", f);
+    fprintf(f, "#define SC_MUL_KS_CUTOFF ((size_t)%zu)\n", ks->cut);
+    fprintf(f, "#define SC_MUL_TOOM3_CUTOFF ((size_t)%zu)\n", toom->cut);
+    fprintf(f, "#define SC_MUL_KARATSUBA_CUTOFF ((size_t)%zu)\n", kar->cut);
+    fprintf(f, "#define SC_MUL_KARATSUBA_LOW_BITS ((size_t)128)\n");
+    fprintf(f, "#define SC_MUL_KARATSUBA_LOW_BITS_CUTOFF ((size_t)%zu)\n", low->cut);
+    if (ntt->win == 0)
+        fputs("#define SC_MUL_NTT_CUTOFF ((size_t)-1)\n", f);
+    else
+        fprintf(f, "#define SC_MUL_NTT_CUTOFF ((size_t)%zu)\n", ntt_cut);
+    if (ssa->win == 0)
+        fputs("#define SC_MUL_SSA_CUTOFF ((size_t)-1)\n", f);
+    else
+        fprintf(f, "#define SC_MUL_SSA_CUTOFF ((size_t)%zu)\n", ssa->cut);
+    if (mfa_cut == UINT_MAX)
+        fputs("#define SC_SSA_MFA_CUTOFF_LOG ((unsigned)-1)\n", f);
+    else
+        fprintf(f, "#define SC_SSA_MFA_CUTOFF_LOG ((unsigned)%u)\n", mfa_cut);
+    fputs("#endif\n\n#include \"tuning_defaults.h\"\n\n#endif\n", f);
+    bad = ferror(f);
+    if (fclose(f) != 0)
+        bad = 1;
+    if (bad || rename(tmp, dst) != 0) {
+        if (!bad)
+            perror(dst);
+        remove(tmp);
+        return 0;
+    }
+    printf("\nWrote %s.  It is machine-local and ignored by Git.\n", dst);
+    return 1;
+}
+
 static tune_result tune_pair(sc_context *ctx, sc_parent *r, gmp_randstate_t state,
                              const char *name, mul_fn old, mul_fn new, size_t bits,
                              int bits_equal_n, size_t lo, size_t hi, size_t fallback)
@@ -236,6 +438,7 @@ int main(void)
     gmp_randstate_t state;
     tune_result ks, kar, low, toom, ntt, ssa;
     size_t ntt_cut, toom_fallback;
+    unsigned mfa_cut;
 
     sc_context_init(&ctx);
     gmp_randinit_default(state);
@@ -273,24 +476,15 @@ int main(void)
             ntt_cut = ntt.cut / np;
         sc_value_free_many(2, a, b);
     }
+    mfa_cut = tune_mfa();
+    sc_tune_ssa_mfa_cutoff_log = mfa_cut;
     ssa = tune_pair(&ctx, &r, state, "lower dispatcher -> SSA (bits = length)",
                     sc_zz_poly_mul, sc_zz_poly_mul_ssa, 0, 1, 32, 2048, (size_t)-1);
-
-    puts("\nSuggested full-product entries for include/tuning.h:");
-    printf("#define SC_MUL_KS_CUTOFF ((size_t)%zu)\n", ks.cut);
-    printf("#define SC_MUL_TOOM3_CUTOFF ((size_t)%zu)\n", toom.cut);
-    printf("#define SC_MUL_KARATSUBA_CUTOFF ((size_t)%zu)\n", kar.cut);
-    printf("#define SC_MUL_KARATSUBA_LOW_BITS ((size_t)128)\n");
-    printf("#define SC_MUL_KARATSUBA_LOW_BITS_CUTOFF ((size_t)%zu)\n", low.cut);
-    if (ntt.win == 0)
-        puts("#define SC_MUL_NTT_CUTOFF ((size_t)-1)");
-    else
-        printf("#define SC_MUL_NTT_CUTOFF ((size_t)%zu) /* length / CRT primes */\n",
-               ntt_cut);
-    if (ssa.win == 0)
-        puts("#define SC_MUL_SSA_CUTOFF ((size_t)-1)");
-    else
-        printf("#define SC_MUL_SSA_CUTOFF ((size_t)%zu)\n", ssa.cut);
+    if (!write_tuning(&ks, &toom, &kar, &low, &ntt, ntt_cut, &ssa, mfa_cut)) {
+        gmp_randclear(state);
+        sc_context_clear(&ctx);
+        return 1;
+    }
 
     gmp_randclear(state);
     sc_context_clear(&ctx);
