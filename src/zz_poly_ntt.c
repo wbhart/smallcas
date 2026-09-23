@@ -143,11 +143,21 @@ static int sc_ntt_prime_pass(sc_value *r, const sc_value *a, const sc_value *b,
         v[i] = (mp_limb_t)mpz_fdiv_ui(a->data.zz_poly.coeff[i], (unsigned long)p);
     for (size_t i = 0; i < b->data.zz_poly.length; i++)
         w[i] = (mp_limb_t)mpz_fdiv_ui(b->data.zz_poly.coeff[i], (unsigned long)p);
-    sc_fft_forward(v, &plan, &m, work);
-    sc_fft_forward(w, &plan, &m, work);
-    for (size_t i = 0; i < n; i++)
+    if (r->data.zz_poly.length < n) {
+        sc_fft_forward_tft(v, a->data.zz_poly.length, r->data.zz_poly.length,
+                           &plan, &m, work);
+        sc_fft_forward_tft(w, b->data.zz_poly.length, r->data.zz_poly.length,
+                           &plan, &m, work);
+    } else {
+        sc_fft_forward(v, &plan, &m, work);
+        sc_fft_forward(w, &plan, &m, work);
+    }
+    for (size_t i = 0; i < r->data.zz_poly.length; i++)
         sc_fft_mul(v + i, v + i, w + i, &m, work);
-    sc_fft_inverse(v, &plan, &m, work);
+    if (r->data.zz_poly.length < n)
+        sc_fft_inverse_tft(v, r->data.zz_poly.length, &plan, &m, work);
+    else
+        sc_fft_inverse(v, &plan, &m, work);
     sc_ntt_crt(r, v, r->data.zz_poly.length, M, p, inv);
     mpz_mul_ui(M, M, (unsigned long)p);
     sc_fft_plan_clear(&plan);

@@ -141,12 +141,20 @@ sc_value *sc_zz_poly_mul_ssa(sc_context *ctx, const sc_value *a, const sc_value 
         sc_ssa_import(sc_fft_entry(av, i, &m), a->data.zz_poly.coeff[i], &m);
     for (size_t i = 0; i < bn; i++)
         sc_ssa_import(sc_fft_entry(bv, i, &m), b->data.zz_poly.coeff[i], &m);
-    sc_ssa_forward(av, &p, &m, work);
-    sc_ssa_forward(bv, &p, &m, work);
-    for (size_t i = 0; i < p.len; i++)
+    if (outn < p.len) {
+        sc_fft_forward_tft(av, an, outn, &p, &m, work);
+        sc_fft_forward_tft(bv, bn, outn, &p, &m, work);
+    } else {
+        sc_ssa_forward(av, &p, &m, work);
+        sc_ssa_forward(bv, &p, &m, work);
+    }
+    for (size_t i = 0; i < outn; i++)
         sc_fft_mul(sc_fft_entry(av, i, &m), sc_fft_entry(av, i, &m),
                    sc_fft_entry(bv, i, &m), &m, work);
-    sc_ssa_inverse(av, &p, &m, work);
+    if (outn < p.len)
+        sc_fft_inverse_tft(av, outn, &p, &m, work);
+    else
+        sc_ssa_inverse(av, &p, &m, work);
     for (size_t i = 0; i < outn; i++)
         sc_ssa_export(r->data.zz_poly.coeff[i], sc_fft_entry_const(av, i, &m),
                       &m, work);

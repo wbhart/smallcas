@@ -260,3 +260,165 @@ void sc_fft_inverse_mfa(mp_ptr a, const sc_fft_plan *p, const sc_fft_mod *m,
     for (size_t i = 0; i < p->len; i++)
         sc_fft_div_2exp(sc_fft_entry(a, i, m), p->logn, m);
 }
+
+static void sc_fft_forward_tft_rec(mp_ptr a, unsigned logn, size_t stride,
+                                   size_t root_stride, size_t zeta,
+                                   size_t z, size_t n,
+                                   const sc_fft_plan *p, const sc_fft_mod *m,
+                                   mp_ptr scratch)
+{
+    size_t len = (size_t)1 << logn;
+    unsigned log1, log2;
+    size_t n1, n2, n1p, z1, z2, z2p, l1, l2;
+
+    if (z == len && n == len) {
+        sc_fft_forward_mfa_rec(a, logn, stride, root_stride, zeta,
+                               p, m, scratch);
+        return;
+    }
+    if (logn == 0)
+        return;
+    if (logn == 1) {
+        mp_ptr x = a, y = sc_fft_entry(a, stride, m);
+
+        if (n == 2 && z == 2) {
+            sc_fft_addsub(x, y, scratch, m);
+            sc_fft_root_pow(y, zeta, 0, p, m, scratch + m->n);
+        } else if (n == 2) {
+            mpn_copyi(y, x, m->n);
+            sc_fft_root_pow(y, zeta, 0, p, m, scratch);
+        } else if (z == 2) {
+            sc_fft_add(x, x, y, m);
+        }
+        return;
+    }
+    log1 = logn >> 1;
+    log2 = logn - log1;
+    l1 = (size_t)1 << log1;
+    l2 = (size_t)1 << log2;
+    n1 = n / l2;
+    n2 = n % l2;
+    n1p = n1 + (n2 != 0);
+    z1 = z / l2;
+    z2 = z % l2;
+    z2p = z1 != 0 ? l2 : z2;
+
+    for (size_t u = 0; u < z2; u++)
+        sc_fft_forward_tft_rec(sc_fft_entry(a, u * stride, m), log1,
+                               stride * l2, root_stride * l2,
+                               zeta + u * root_stride, z1 + 1, n1p,
+                               p, m, scratch);
+    for (size_t u = z2; u < z2p; u++)
+        sc_fft_forward_tft_rec(sc_fft_entry(a, u * stride, m), log1,
+                               stride * l2, root_stride * l2,
+                               zeta + u * root_stride, z1, n1p,
+                               p, m, scratch);
+    zeta *= l1;
+    for (size_t u = 0; u < n1; u++)
+        sc_fft_forward_tft_rec(sc_fft_entry(a, u * l2 * stride, m), log2,
+                               stride, root_stride * l1, zeta, z2p, l2,
+                               p, m, scratch);
+    if (n2 != 0)
+        sc_fft_forward_tft_rec(sc_fft_entry(a, n1 * l2 * stride, m), log2,
+                               stride, root_stride * l1, zeta, z2p, n2,
+                               p, m, scratch);
+}
+
+static void sc_fft_itft_rec(mp_ptr a, unsigned logn, size_t stride,
+                            size_t root_stride, size_t zeta,
+                            size_t z, size_t n, int f,
+                            const sc_fft_plan *p, const sc_fft_mod *m,
+                            mp_ptr scratch)
+{
+    size_t len = (size_t)1 << logn;
+    unsigned log1, log2;
+    size_t n1, n2, z1, z2, z2p, l1, l2, lo, hi;
+
+    if (n == len) {
+        sc_fft_inverse_mfa_rec(a, logn, stride, root_stride, zeta,
+                               p, m, scratch);
+        return;
+    }
+    if (logn == 0)
+        return;
+    if (logn == 1) {
+        mp_ptr x = a, y = sc_fft_entry(a, stride, m), t = scratch;
+
+        if (n == 1) {
+            mpn_copyi(t, x, m->n);
+            if (z == 2)
+                sc_fft_sub(x, x, y, m);
+            if (f) {
+                if (z == 2)
+                    sc_fft_sub(y, t, y, m);
+                else
+                    mpn_copyi(y, t, m->n);
+                sc_fft_root_pow(y, zeta, 0, p, m, t + m->n);
+            }
+            sc_fft_add(x, x, t, m);
+        } else {
+            if (z == 2)
+                sc_fft_add(x, x, y, m);
+            sc_fft_div_2exp(x, 1, m);
+        }
+        return;
+    }
+    log1 = logn >> 1;
+    log2 = logn - log1;
+    l1 = (size_t)1 << log1;
+    l2 = (size_t)1 << log2;
+    n1 = n / l2;
+    n2 = n % l2;
+    z1 = z / l2;
+    z2 = z % l2;
+    z2p = z1 != 0 ? l2 : z2;
+    lo = n2 < z2 ? n2 : z2;
+    hi = n2 > z2 ? n2 : z2;
+
+    for (size_t u = 0; u < n1; u++)
+        sc_fft_itft_rec(sc_fft_entry(a, u * l2 * stride, m), log2,
+                        stride, root_stride * l1, zeta * l1,
+                        l2, l2, 0, p, m, scratch);
+    for (size_t u = n2; u < hi; u++)
+        sc_fft_itft_rec(sc_fft_entry(a, u * stride, m), log1,
+                        stride * l2, root_stride * l2,
+                        zeta + u * root_stride, z1 + 1, n1,
+                        n2 + (size_t)f != 0, p, m, scratch);
+    for (size_t u = hi; u < z2p; u++)
+        sc_fft_itft_rec(sc_fft_entry(a, u * stride, m), log1,
+                        stride * l2, root_stride * l2,
+                        zeta + u * root_stride, z1, n1,
+                        n2 + (size_t)f != 0, p, m, scratch);
+    if (n2 + (size_t)f != 0)
+        sc_fft_itft_rec(sc_fft_entry(a, n1 * l2 * stride, m), log2,
+                        stride, root_stride * l1, zeta * l1,
+                        z2p, n2, f, p, m, scratch);
+    for (size_t u = 0; u < lo; u++)
+        sc_fft_itft_rec(sc_fft_entry(a, u * stride, m), log1,
+                        stride * l2, root_stride * l2,
+                        zeta + u * root_stride, z1 + 1, n1 + 1, 0,
+                        p, m, scratch);
+    for (size_t u = lo; u < n2; u++)
+        sc_fft_itft_rec(sc_fft_entry(a, u * stride, m), log1,
+                        stride * l2, root_stride * l2,
+                        zeta + u * root_stride, z1, n1 + 1, 0,
+                        p, m, scratch);
+}
+
+void sc_fft_forward_tft(mp_ptr a, size_t z, size_t n, const sc_fft_plan *p,
+                        const sc_fft_mod *m, mp_ptr scratch)
+{
+    if (z == 0 || n == 0 || z > p->len || n > p->len)
+        return;
+    sc_fft_forward_tft_rec(a, p->logn, 1, 1, 0, z, n, p, m, scratch);
+}
+
+void sc_fft_inverse_tft(mp_ptr a, size_t n, const sc_fft_plan *p,
+                        const sc_fft_mod *m, mp_ptr scratch)
+{
+    if (n == 0 || n > p->len)
+        return;
+    sc_fft_itft_rec(a, p->logn, 1, 1, 0, n, n, 0, p, m, scratch);
+    for (size_t i = 0; i < n; i++)
+        sc_fft_div_2exp(sc_fft_entry(a, i, m), p->logn, m);
+}

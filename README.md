@@ -1,6 +1,6 @@
-# smallcas iter46
+# smallcas iter53
 
-A deliberately tiny computer algebra system in C. Iteration 43 has `ZZ` and
+A deliberately tiny computer algebra system in C. The current checkpoint has `ZZ` and
 univariate polynomial rings over `ZZ`, backed directly by GMP integers. GNU
 Bison generates the parser, Flex generates the lexer, and GNU Readline provides
 editable interactive input with persistent command history.
@@ -54,6 +54,11 @@ forward-plus-inverse round trip; if no 5% MFA win is found through depth 15 it i
 Only after every tuning stage succeeds does the tuner atomically replace
 `include/tuning.h` with the measured full-product and MFA values.  Subsequent source
 patches should therefore change `tuning_defaults.h`, not the local `tuning.h`.
+
+The FFT layer also provides cache-friendly TFT/ITFT transforms.  The NTT and SSA
+multipliers use a truncated round trip whenever the product length is not already a
+power of two, computing only the Fourier values and pointwise products that are needed.
+Exact power-of-two products retain the existing full-transform path.
 
 ## Example
 

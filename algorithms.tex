@@ -8333,6 +8333,210 @@ explains why the MFA is a useful stepping stone rather than the final
 smoothing mechanism: the later TFT will use the same matrix decomposition but
 will omit work belonging to known zero inputs and unrequested outputs.
 
+\section{Truncated Fourier transforms}
+\label{sec:tft}
+
+The full MFA improves locality but still computes all $L$ Fourier values even
+when a product has only $n<L$ coefficients.  The truncated Fourier transform
+(TFT) removes this remaining padding work.  We use the strict, cache-friendly
+form of Harvey \cite{Harvey2008CacheTFT}, with the same weighted bit-reversed
+transform as Definition~\ref{def:weighted-dft}.
+
+\begin{definition}[Truncated Fourier transform]
+\label{def:tft}
+Let $1\leq z,n\leq L$, suppose $a_z=\cdots=a_{L-1}=0$, and write
+$\widehat a=\mathcal F_{L,\zeta}(a)$.  The transform
+$\operatorname{TFT}(L,\zeta,z,n)$ takes the initial data
+$a_0,\ldots,a_{z-1}$ and returns only
+$\widehat a_0,\ldots,\widehat a_{n-1}$.
+\end{definition}
+
+The omitted input cells need not actually contain zero.  The algorithm simply
+never reads a cell that represents one of the known zeros.  This matters in an
+in-place implementation because the unused cells are available as temporary
+storage.
+
+Let $L=L_1L_2$ be the balanced split from Section~\ref{sec:mfa}.  Decompose
+\[
+ n=n_2+L_2n_1,\qquad z=z_2+L_2z_1,
+\]
+where $0\leq n_2,z_2<L_2$, and put
+\[
+ n_1'=n_1+[n_2>0],\qquad
+ z_2'=\begin{cases}L_2,&z_1>0,\\ z_2,&z_1=0.\end{cases}
+\]
+Here brackets denote an indicator.  The first $z_2$ columns contain $z_1+1$
+nonzero entries, the remaining columns below $z_2'$ contain $z_1$, and all
+columns from $z_2'$ onward are identically zero when $z_1=0$.
+
+\begin{algorithm}[Cache-friendly TFT]\label{alg:tft}
+For $L=2$, compute only the requested parts of
+\[
+ (a_0+a_1,\ \zeta(a_0-a_1)),
+\]
+treating $a_1$ as zero when $z=1$.  For $L>2$:
+\begin{enumerate}
+ \item for $0\leq u<z_2$, apply
+ $\operatorname{TFT}(L_1,\zeta\omega_L^u,z_1+1,n_1')$ to column $u$;
+ \item for $z_2\leq u<z_2'$, apply
+ $\operatorname{TFT}(L_1,\zeta\omega_L^u,z_1,n_1')$ to column $u$;
+ \item apply $\operatorname{TFT}(L_2,\zeta^{L_1},z_2',L_2)$ to each of the
+ first $n_1$ rows;
+ \item if $n_2>0$, apply
+ $\operatorname{TFT}(L_2,\zeta^{L_1},z_2',n_2)$ to row $n_1$.
+\end{enumerate}
+A recursive call with $z=n=L$ is an ordinary weighted MFA and is delegated to
+that implementation.
+\end{algorithm}
+
+\begin{theorem}[Correctness of the TFT]\label{thm:tft-correct}
+Algorithm~\ref{alg:tft} returns exactly the first $n$ entries of
+$\mathcal F_{L,\zeta}(a)$.
+\end{theorem}
+
+\begin{proof}
+The assertion for $L=2$ is immediate.  For the recursive case use the MFA
+factorization \eqref{eq:mfa-columns}--\eqref{eq:mfa-rows}.  Column $u<z_2$
+has $z_1+1$ possibly nonzero inputs, while a column with
+$z_2\leq u<z_2'$ has $z_1$.  Thus the first two steps compute exactly the
+entries $b_{u+L_2v}$ needed for $0\leq v<n_1'$ and $0\leq u<z_2'$.
+If $z_1=0$, every omitted column is identically zero; if $z_1>0$, then
+$z_2'=L_2$ and there are no omitted columns.
+
+Consequently each of the first $n_1$ rows has precisely the input prefix
+needed for its complete row transform, and the next row has precisely the
+input prefix needed for its first $n_2$ outputs.  Equation
+\eqref{eq:mfa-rows} identifies these values with
+$\widehat a_0,\ldots,\widehat a_{n-1}$.  Induction on $\log_2L$ proves the
+claim.
+\end{proof}
+
+The inverse needs a slightly richer interface because the missing Fourier
+values cannot simply be declared zero.
+
+\begin{definition}[Inverse truncated Fourier transform]
+\label{def:itft}
+Let $f\in\{0,1\}$, $z\geq n$, $1\leq z\leq L$ and
+$1\leq n+f\leq L$.  Suppose $a_z=\cdots=a_{L-1}=0$.  The ITFT receives
+\[
+ \widehat a_0,\ldots,\widehat a_{n-1},
+ La_n,\ldots,La_{z-1}
+\]
+in the first $z$ cells.  It returns $La_0,\ldots,La_{n-1}$ and, when $f=1$,
+also $\widehat a_n$.
+\end{definition}
+
+The factors $L$ make the recursion fraction-free apart from exact divisions by
+two in the $L=2$ base case.  For polynomial multiplication we need only the
+specialization $z=n$, $f=0$; after the ITFT we divide the first $n$ entries by
+$L$.
+
+For completeness, the recursive schedule used by the implementation is given
+next.  Write $m=\min(n_2,z_2)$, $m'=\max(n_2,z_2)$ and
+$f'=[n_2+f>0]$.
+
+\begin{algorithm}[Cache-friendly ITFT]\label{alg:itft}
+For $L=2$, solve the two-point transform directly.  For $L>2$:
+\begin{enumerate}
+ \item apply full ITFTs to rows $0,\ldots,n_1-1$;
+ \item for $n_2\leq u<m'$, apply the column ITFT with parameters
+ $(z_1+1,n_1,f')$, and for $m'\leq u<z_2'$ use $(z_1,n_1,f')$;
+ \item if $f'=1$, apply the row ITFT with parameters $(z_2',n_2,f)$ to row
+ $n_1$;
+ \item for $0\leq u<m$, apply the column ITFT with parameters
+ $(z_1+1,n_1+1,0)$, and for $m\leq u<n_2$ use $(z_1,n_1+1,0)$.
+\end{enumerate}
+The row weight is $\zeta^{L_1}$ and column $u$ has weight
+$\zeta\omega_L^u$, exactly as in the MFA.
+\end{algorithm}
+
+\begin{theorem}[Correctness of the ITFT]\label{thm:itft-correct}
+Algorithm~\ref{alg:itft} computes the outputs in
+Definition~\ref{def:itft}.  Hence the specialization $z=n$, $f=0$, followed
+by division by $L$, is inverse to the length-$n$ TFT on data supported in
+$0,\ldots,n-1$.
+\end{theorem}
+
+\begin{proof}
+For $L=2$, write
+\[
+ \widehat a_0=a_0+a_1,\qquad
+ \widehat a_1=\zeta(a_0-a_1).
+\]
+The seven possible input configurations give the stated outputs by one addition
+or subtraction and, where necessary, multiplication by $\zeta^{\pm1}$ or
+exact division by two.
+
+For $L>2$, use the same matrix factorization as in the proof of
+Theorem~\ref{thm:tft-correct}.  The first phase inverts every complete known
+Fourier row, producing the corresponding scaled intermediate $b$-values.
+The right-hand column phase then recovers exactly the intermediate entries
+needed to reconstruct the possibly partial row $n_1$.  That row ITFT supplies
+the remaining Fourier datum when $f=1$ and the intermediate values needed on
+the left.  Finally the left-hand column phase recovers
+$La_0,\ldots,La_{n-1}$.  The split at $m=\min(n_2,z_2)$ distinguishes columns
+that contain the extra coefficient $a_{z_1L_2+u}$ from those that do not; the
+split at $m'=\max(n_2,z_2)$ distinguishes the columns required before the last
+row can be inverted.  Thus every recursive call receives exactly the mixed
+Fourier/coefficient data specified by Definition~\ref{def:itft}.
+
+Each recursive dimension contributes its own unnormalized factor, $L_2$ on a
+row and $L_1$ on a column, so their product is $L$.  Induction therefore gives
+precisely the scaling asserted in the definition.  This is also the invariant
+used in Harvey's proof \cite{Harvey2008CacheTFT}.
+\end{proof}
+
+\begin{theorem}[TFT/ITFT complexity]\label{thm:tft-complexity}
+A length-$L=2^\ell$ TFT requesting $n$ outputs, and the corresponding ITFT,
+use $O(n\ell+L)$ radix-$2$ butterfly work.  More precisely, the cache-friendly
+algorithms execute at most $\ell n/2+L$ two-point base operations.  If ring
+elements occupy $O(K)$ bits and root multiplication costs $O(K)$, each
+transform therefore costs
+\[
+ O\bigl(K(n\log L+L)\bigr)
+\]
+bit operations and $O(KL)$ bits of storage.
+\end{theorem}
+
+\begin{proof}
+The exact base-operation bound is the truncation count proved for the strict
+cache-friendly TFT and ITFT in \cite{Harvey2008CacheTFT}: a complete transform
+has $L\ell/2$ butterflies, while pruning the unrequested output region leaves
+at most $\ell n/2+L$ two-point leaves.  The matrix rearrangement changes only
+the visitation order, so it has the same count.  Multiplying the arithmetic
+count by the $O(K)$ cost of a butterfly gives the bit bound.  The in-place
+array still has $L$ ring elements.
+\end{proof}
+
+\begin{corollary}[Truncated transform multiplication]
+\label{cor:tft-multiplication}
+Let $g,h$ have lengths $z_g,z_h$, put $n=z_g+z_h-1$, and let $L$ be the least
+power of two at least $n$.  Two TFTs requesting $n$ outputs, $n$ pointwise
+products, and an ITFT with $z=n$, $f=0$ recover $gh$.  In the $2^K+1$ ring the
+bit cost is
+\[
+ O\bigl(K(n\log L+L)+n\MZ(K)\bigr).
+\]
+Since $L<2n$ unless $n=1$, this has the same asymptotic bound as the padded
+FFT method, but the transform and pointwise work now varies with $n$ rather
+than jumping immediately to the full length $L$.
+\end{corollary}
+
+\begin{proof}
+The two TFTs give the first $n$ Fourier coordinates of the zero-padded inputs.
+Pointwise multiplication therefore gives the first $n$ Fourier coordinates of
+$gh$.  The product has no coefficients from index $n$ onward, so
+Theorem~\ref{thm:itft-correct} with $z=n$, $f=0$ recovers its coefficients.
+The complexity follows from Theorem~\ref{thm:tft-complexity} and the $n$
+pointwise products.
+\end{proof}
+
+The implementation uses this truncated round trip in both the CRT-NTT and SSA
+multipliers whenever $n<L$.  At the exact power-of-two endpoints $n=L$ it
+keeps the existing full transform path, including the tuned radix-$2$/MFA
+choice for SSA.  Thus the new code removes padding work without perturbing the
+already tuned endpoint implementation.
+
 \section{Number-theoretic transforms and CRT multiplication}
 
 Let

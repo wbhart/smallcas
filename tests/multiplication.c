@@ -149,7 +149,8 @@ static int test_ntt(sc_context *ctx, sc_parent *r)
 {
     static const size_t cases[][4] = {
         { 1, 1, 20, 19 }, { 7, 5, 90, 93 }, { 19, 23, 260, 257 },
-        { 7, 5, 700, 711 }, { 70, 65, 20, 23 }
+        { 7, 5, 700, 711 }, { 33, 32, 80, 83 },
+        { 64, 64, 80, 83 }, { 70, 65, 20, 23 }
     };
 
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
@@ -163,7 +164,8 @@ static int test_ssa(sc_context *ctx, sc_parent *r)
 {
     static const size_t cases[][4] = {
         { 1, 1, 20, 19 }, { 7, 5, 90, 93 }, { 19, 23, 260, 257 },
-        { 40, 37, 700, 711 }, { 70, 65, 20, 23 }
+        { 40, 37, 700, 711 }, { 33, 32, 80, 83 },
+        { 64, 64, 80, 83 }, { 70, 65, 20, 23 }
     };
 
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)

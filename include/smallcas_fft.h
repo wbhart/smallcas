@@ -34,6 +34,10 @@ void sc_fft_forward_mfa(mp_ptr a, const sc_fft_plan *p, const sc_fft_mod *m,
                         mp_ptr scratch);
 void sc_fft_inverse_mfa(mp_ptr a, const sc_fft_plan *p, const sc_fft_mod *m,
                         mp_ptr scratch);
+void sc_fft_forward_tft(mp_ptr a, size_t z, size_t n, const sc_fft_plan *p,
+                        const sc_fft_mod *m, mp_ptr scratch);
+void sc_fft_inverse_tft(mp_ptr a, size_t n, const sc_fft_plan *p,
+                        const sc_fft_mod *m, mp_ptr scratch);
 void sc_fft_mul(mp_ptr r, mp_srcptr a, mp_srcptr b,
                 const sc_fft_mod *m, mp_ptr scratch);
 void sc_fft_div_2exp(mp_ptr a, size_t k, const sc_fft_mod *m);
