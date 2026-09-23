@@ -7912,6 +7912,459 @@ All three operations reuse the resultant, gcd and exact-division machinery
 already developed in this chapter.
 
 
+\chapter{Fourier transforms and transform multiplication}
+\label{chap:fft}
+
+Fast transform multiplication replaces coefficient convolution by pointwise
+multiplication after evaluation at roots of unity.  The transform itself is
+independent of whether the roots live in a finite field or in a composite
+residue ring.  This chapter first develops the common algebra, then gives two
+exact specializations for integer polynomials: number-theoretic transforms
+combined by the Chinese remainder theorem, and a single transform modulo a
+number of the form $2^K+1$.
+
+The radix-$2$ factorization is the classical FFT of Cooley and Tukey
+\cite{CooleyTukey1965}.  Pollard \cite{Pollard1971} developed the finite-field
+version for exact convolution.  The use of the rings $\ZZ/(2^K+1)\ZZ$, where
+powers of two are especially cheap roots of unity, is central to the
+Sch\"onhage--Strassen multiplication method \cite{SchonhageStrassen1971}.
+Brent and Zimmermann \cite{BrentZimmermann2010} give a modern treatment of
+modular FFT arithmetic.
+
+\section{Discrete Fourier transforms over rings}
+
+Let $R$ be a commutative ring with identity and let $N\geq1$.  The form needed
+below is slightly more general than a transform over a field.
+
+\begin{definition}[Principal root of unity]
+An element $\omega\in R$ is a \emph{principal $N$th root of unity} if
+$\omega^N=1$ and
+\begin{equation}\label{eq:principal-root-orthogonality}
+ \sum_{j=0}^{N-1}\omega^{ij}=0,
+ \qquad 1\leq i<N.
+\end{equation}
+\end{definition}
+
+If $R$ is a field, every element of exact order $N$ is principal: for
+$1\leq i<N$, the geometric sum in
+\eqref{eq:principal-root-orthogonality} is annihilated by the nonzero element
+$\omega^i-1$.  Over a ring with zero divisors, exact multiplicative order alone
+is not sufficient, which is why the orthogonality condition is stated
+explicitly.
+
+\begin{definition}[Discrete Fourier transform]
+Let $\omega$ be a principal $N$th root in $R$.  For
+$a=(a_0,\ldots,a_{N-1})\in R^N$, define
+\begin{equation}\label{eq:dft-definition}
+ \widehat a_k=\sum_{j=0}^{N-1}a_j\omega^{jk},
+ \qquad 0\leq k<N.
+\end{equation}
+The map $a\mapsto\widehat a$ is denoted $\mathcal F_\omega$.
+\end{definition}
+
+\begin{theorem}[Fourier inversion]\label{thm:ring-dft-inversion}
+Suppose that $\omega$ is a principal $N$th root in $R$ and that $N$ is a unit
+in $R$.  Then
+\begin{equation}\label{eq:dft-inverse}
+ a_j=N^{-1}\sum_{k=0}^{N-1}\widehat a_k\omega^{-jk}.
+\end{equation}
+Thus $\mathcal F_\omega^{-1}=N^{-1}\mathcal F_{\omega^{-1}}$.
+\end{theorem}
+
+\begin{proof}
+Substituting \eqref{eq:dft-definition} into the right side of
+\eqref{eq:dft-inverse} gives
+\[
+ N^{-1}\sum_{\ell=0}^{N-1}a_\ell
+ \sum_{k=0}^{N-1}\omega^{(\ell-j)k}.
+\]
+If $\ell=j$, the inner sum is $N$.  Otherwise
+$\ell-j\not\equiv0\pmod N$, so the inner sum is zero by
+\eqref{eq:principal-root-orthogonality}.  Only $a_j$ remains.
+\end{proof}
+
+For $a,b\in R^N$, define their cyclic convolution by
+\begin{equation}\label{eq:cyclic-convolution}
+ (a*b)_k=\sum_{i+j\equiv k\pmod N}a_i b_j.
+\end{equation}
+
+\begin{theorem}[Convolution theorem]\label{thm:ring-convolution}
+Under the hypotheses of Theorem~\ref{thm:ring-dft-inversion},
+\[
+ \mathcal F_\omega(a*b)_k=\widehat a_k\widehat b_k
+ \qquad(0\leq k<N).
+\]
+Consequently cyclic convolution is obtained by two forward transforms,
+$N$ pointwise products, and one inverse transform.
+\end{theorem}
+
+\begin{proof}
+Expanding the transform of \eqref{eq:cyclic-convolution}, and writing
+$k\equiv i+j\pmod N$, gives
+\[
+ \sum_{i,j}a_i b_j\omega^{(i+j)\ell}
+ =\left(\sum_i a_i\omega^{i\ell}\right)
+  \left(\sum_j b_j\omega^{j\ell}\right).
+\]
+This is $\widehat a_\ell\widehat b_\ell$.  Fourier inversion gives the final
+statement.
+\end{proof}
+
+\begin{corollary}[Ordinary polynomial product]\label{cor:zero-padded-convolution}
+Let $f,g\in R[x]$ have lengths $m,n$, and let $N\geq m+n-1$.  Pad their
+coefficient vectors with zeros to length $N$.  Their cyclic convolution is the
+coefficient vector of the ordinary product $fg$ followed by zeros.
+\end{corollary}
+
+\begin{proof}
+Every nonzero product term has index $i+j\leq m+n-2<N$, so reduction of the
+index modulo $N$ never wraps around.
+\end{proof}
+
+\section{The radix-$2$ FFT}
+
+Assume now that $N=2^r$ and $\omega$ is a principal $N$th root.  A direct DFT
+uses $N^2$ ring operations.  The radix-$2$ factorization reduces this to
+$O(N\log N)$.
+
+Put $h=N/2$.  For $0\leq j<h$, set
+\begin{equation}\label{eq:dif-butterfly}
+ u_j=a_j+a_{j+h},
+ \qquad
+ v_j=(a_j-a_{j+h})\omega^j.
+\end{equation}
+For even and odd frequency indices respectively,
+\begin{align}
+ \widehat a_{2k}
+   &=\sum_{j=0}^{h-1}u_j(\omega^2)^{jk},\label{eq:dif-even}\\
+ \widehat a_{2k+1}
+   &=\sum_{j=0}^{h-1}v_j(\omega^2)^{jk}.\label{eq:dif-odd}
+\end{align}
+Thus one length-$N$ transform reduces to two length-$h$ transforms after
+$h$ butterflies.  This is the decimation-in-frequency form.
+
+\begin{algorithm}[Radix-$2$ forward DIF transform]\label{alg:fft-dif}
+Input $a_0,\ldots,a_{N-1}$ and a principal $N$th root $\omega$.
+For $m=N,N/2,\ldots,2$, put $h=m/2$ and $s=N/m$.  For each block beginning
+at $b=0,m,2m,\ldots,N-m$ and each $0\leq j<h$, replace
+\[
+ (a_{b+j},a_{b+j+h})
+ \longleftarrow
+ \bigl(a_{b+j}+a_{b+j+h},
+       (a_{b+j}-a_{b+j+h})\omega^{js}\bigr).
+\]
+The resulting entries are $\widehat a_k$ in bit-reversed order.
+\end{algorithm}
+
+The inverse can use the reverse scheduling.  Its elementary DIT butterfly is
+\begin{equation}\label{eq:dit-inverse-butterfly}
+ (x,y)\longmapsto
+ \bigl(x+\omega^{-e}y,\ x-\omega^{-e}y\bigr).
+\end{equation}
+After all stages every entry is multiplied by $N^{-1}$.
+
+\begin{algorithm}[Radix-$2$ inverse DIT transform]\label{alg:fft-dit-inverse}
+Input the Fourier values in bit-reversed order.  For
+$m=2,4,\ldots,N$, put $h=m/2$ and $s=N/m$.  For each block beginning at
+$b=0,m,2m,\ldots,N-m$ and $0\leq j<h$, replace
+\[
+ (a_{b+j},a_{b+j+h})
+ \longleftarrow
+ \bigl(a_{b+j}+\omega^{-js}a_{b+j+h},
+       a_{b+j}-\omega^{-js}a_{b+j+h}\bigr).
+\]
+Finally multiply every entry by $N^{-1}$.  The output is in natural order.
+\end{algorithm}
+
+\begin{theorem}[Correctness of the radix-$2$ pair]
+Algorithm~\ref{alg:fft-dif} computes $\mathcal F_\omega$, with bit-reversed
+output ordering.  Algorithm~\ref{alg:fft-dit-inverse} consumes that ordering
+and computes $\mathcal F_\omega^{-1}$ in natural order.
+\end{theorem}
+
+\begin{proof}
+Equations \eqref{eq:dif-even} and \eqref{eq:dif-odd} prove one DIF stage.
+Recursing first on the even-frequency half and then on the odd-frequency half
+moves the low frequency bit to the outside at each stage, hence reverses the
+$r$ frequency bits.  Repeating the factorization for all $r$ stages proves the
+forward claim.
+
+By Theorem~\ref{thm:ring-dft-inversion}, the inverse transform is
+$N^{-1}\mathcal F_{\omega^{-1}}$.  Reversing the forward factorization gives
+the DIT butterflies \eqref{eq:dit-inverse-butterfly}; it consumes the
+bit-reversed order produced by DIF and restores natural order.  The final
+factor $N^{-1}$ completes Fourier inversion.
+\end{proof}
+
+\begin{theorem}[Radix-$2$ operation count]\label{thm:fft-operation-count}
+A length-$N=2^r$ radix-$2$ transform has $r$ stages and $N/2$ butterflies per
+stage.  Hence it uses exactly $Nr/2$ butterflies, $Nr$ additions or
+subtractions, and at most $Nr/2$ multiplications by roots of unity.  The
+inverse has the same cost plus $N$ normalizations by $N^{-1}$.
+\end{theorem}
+
+\begin{proof}
+Each stage partitions the $N$ entries into $N/m$ blocks, with $m/2$
+butterflies per block, hence $N/2$ butterflies.  There are $r=\log_2N$
+stages.  Each butterfly has two additions or subtractions and at most one
+twiddle multiplication.
+\end{proof}
+
+Pairing DIF forward transforms with a DIT inverse is useful because no explicit
+bit-reversal permutation is required between transformation and pointwise
+multiplication.  Matrix Fourier algorithms and truncated Fourier transforms
+reschedule or omit butterflies, but they use the same DFT and convolution
+identities established above.
+
+\section{Number-theoretic transforms and CRT multiplication}
+
+Let
+\begin{equation}\label{eq:ntt-prime-form}
+ p=c2^s+1
+\end{equation}
+be an odd prime.  The multiplicative group $\mathbb F_p^\times$ is cyclic of
+order $c2^s$.  Hence it contains an element $\rho$ of order $2^s$.  If
+$N=2^r\leq2^s$, then
+\begin{equation}\label{eq:ntt-root}
+ \omega=\rho^{2^{s-r}}
+\end{equation}
+has exact order $N$.  Since $\mathbb F_p$ is a field, $\omega$ is principal,
+and since $p$ is odd, $N$ is invertible modulo $p$.
+
+The form \eqref{eq:ntt-prime-form} is therefore attractive because it supplies
+a large power-of-two transform length.  If $p$ fits in one machine word,
+residue arithmetic and stored twiddle factors also have fixed word size.  The
+constant $c$ need not be small; what matters algebraically is the large
+$2$-power dividing $p-1$.
+
+\begin{algorithm}[One-prime NTT convolution]\label{alg:one-prime-ntt}
+Choose a power of two $N\geq m+n-1$ supported by $p$.
+Reduce the coefficients of $f$ and $g$ modulo $p$, pad to length $N$, apply
+two radix-$2$ transforms with \eqref{eq:ntt-root}, multiply pointwise, and
+apply the inverse transform.  Retain the first $m+n-1$ residues.
+\end{algorithm}
+
+\begin{theorem}\label{thm:one-prime-ntt-correct}
+Algorithm~\ref{alg:one-prime-ntt} returns the coefficients of $fg$ modulo
+$p$.
+\end{theorem}
+
+\begin{proof}
+Equation \eqref{eq:ntt-root} supplies a principal $N$th root and $N$ is a unit.
+Theorem~\ref{thm:ring-convolution} therefore computes cyclic convolution
+modulo $p$.  Corollary~\ref{cor:zero-padded-convolution} identifies this with
+the ordinary product because of the zero padding.
+\end{proof}
+
+To recover an integer product, use several distinct NTT primes.  Suppose
+$\bits(a_i)\leq\tau_A$, $\bits(b_j)\leq\tau_B$, and put
+$s_0=\min(m,n)$.  As in \eqref{eq:product-coefficient-bound}, every product
+coefficient $d_k$ satisfies
+\begin{equation}\label{eq:ntt-coefficient-bound}
+ |d_k|<s_0 2^{\tau_A+\tau_B}.
+\end{equation}
+Let $p_1,\ldots,p_t$ be distinct supported NTT primes and put
+$M=p_1\cdots p_t$.
+
+\begin{theorem}[Exact CRT reconstruction]\label{thm:ntt-crt-correct}
+If
+\begin{equation}\label{eq:ntt-crt-size}
+ M\geq
+ 2^{\tau_A+\tau_B+\lceil\log_2s_0\rceil+1},
+\end{equation}
+then the balanced representative in $(-M/2,M/2)$ of the CRT combination of
+the NTT residues is exactly each integer coefficient of $fg$.
+\end{theorem}
+
+\begin{proof}
+By \eqref{eq:ntt-coefficient-bound},
+\[
+ 2|d_k|<2^{\tau_A+\tau_B+\lceil\log_2s_0\rceil+1}\leq M.
+\]
+The one-prime transforms determine $d_k$ modulo every $p_i$, hence modulo
+$M$ by the Chinese remainder theorem.  Since $|d_k|<M/2$, it is the unique
+integer in the balanced interval representing that residue class.
+\end{proof}
+
+\begin{theorem}[Complexity of CRT-NTT multiplication]
+Let $N$ be the least power of two at least $m+n-1$.  Suppose the available
+NTT primes have $w=\Theta(1)$ machine-word bits and sufficient transform
+length.  Put
+\[
+ W=\tau_A+\tau_B+\lceil\log_2s_0\rceil+1.
+\]
+Then $t=O(W/w)$ primes suffice.  The transforms and pointwise products use
+\[
+ O(tN\log N)
+\]
+word modular operations.  With product-tree CRT, reconstruction has bit
+complexity
+\[
+ O\bigl(N\MZ(W)\log t\bigr).
+\]
+A straightforward incremental CRT has the same correctness but may have a
+larger reconstruction constant and an additional factor up to $t$ in a simple
+worst-case bit bound.
+\end{theorem}
+
+\begin{proof}
+A product of $t$ $w$-bit primes has $\Theta(tw)$ bits, so
+\eqref{eq:ntt-crt-size} needs $t=O(W/w)$.  By
+Theorem~\ref{thm:fft-operation-count}, two forward transforms and one inverse
+transform cost $O(N\log N)$ word operations per prime; the $N$ pointwise
+products do not change the order.  Standard product-tree CRT combines $t$
+moduli of total bit size $W$ in $O(\MZ(W)\log t)$ bit operations per output
+coefficient, giving the stated reconstruction bound.
+\end{proof}
+
+Thus an NTT trades one large transform modulus for several word-size moduli.
+The transforms are cheap and regular; the price is the number of primes and
+the final CRT reconstruction.
+
+\section{Transforms modulo $2^K+1$}
+
+A different exact strategy avoids CRT.  Let
+\begin{equation}\label{eq:fermat-modulus}
+ P=2^K+1,
+\end{equation}
+where $K$ is a power of two, and work in
+$R=\ZZ/P\ZZ$.  The modulus need not be prime.
+
+\begin{lemma}[Order of two]\label{lem:fermat-two-order}
+The residue class of $2$ modulo $P$ has exact multiplicative order $2K$.
+\end{lemma}
+
+\begin{proof}
+The relation $2^K\equiv-1\pmod P$ gives $2^{2K}\equiv1$, so the order divides
+$2K$.  It does not divide $K$.  Since $K$ and $2K$ are powers of two, every
+proper divisor of $2K$ divides $K$.  Therefore the order is $2K$.
+\end{proof}
+
+Let $N$ be a power of two with $N\leq2K$.  Then $N\mid2K$, and
+\begin{equation}\label{eq:ssa-root}
+ \omega=2^{2K/N}\pmod P
+\end{equation}
+has exact order $N$.  Over a composite ring we must still prove the stronger
+principal-root property.
+
+\begin{lemma}[Principal Fermat-ring roots]\label{lem:fermat-principal-root}
+The element $\omega$ in \eqref{eq:ssa-root} is a principal $N$th root of
+unity in $R$.  Moreover $N$ is a unit in $R$.
+\end{lemma}
+
+\begin{proof}
+The modulus $P$ is odd, so the power of two $N$ is a unit.  Fix
+$1\leq j<N$.  We prove that $\omega^j-1$ is a unit modulo $P$.
+
+Suppose a prime $q$ divided both $P$ and the integer representing
+$\omega^j-1$.  Since $q\mid P$, we have $2^K\equiv-1\pmod q$.  The order of
+$2$ modulo $q$ therefore divides $2K$ but not $K$.  As $2K$ is a power of
+two, this order must equal $2K$.  On the other hand,
+$\omega^j\equiv1\pmod q$ would make that order divide
+\[
+ \frac{2Kj}{N}<2K,
+\]
+a contradiction.  Hence $\gcd(\omega^j-1,P)=1$, so $\omega^j-1$ is a unit.
+The geometric identity
+\[
+ (\omega^j-1)\sum_{i=0}^{N-1}\omega^{ij}=\omega^{jN}-1=0
+\]
+then implies the required orthogonality sum is zero.
+\end{proof}
+
+The same relation that supplies the roots also makes their multiplication
+cheap.  Since $2^K\equiv-1$, multiplication by $2^e$ can be performed by a
+bit shift followed by folding the part above bit $K$ back with a minus sign.
+After reducing $e$ modulo $2K$, crossing $K$ merely changes the sign.  Thus a
+twiddle multiplication costs $O(K)$ bit operations rather than a general
+$K$-bit modular multiplication.
+
+\begin{algorithm}[Single-modulus transform multiplication]\label{alg:ssa-poly-mul}
+Let $f,g\in\ZZ[x]$ have lengths $m,n$.  Put $L=m+n-1$ and choose a power of
+two $N\geq L$.  Choose a power of two $K$ such that
+\begin{equation}\label{eq:ssa-parameter-conditions}
+ N\leq2K,
+ \qquad
+ K\geq\tau_A+\tau_B+\lceil\log_2s_0\rceil+1.
+\end{equation}
+Reduce the coefficients modulo $P=2^K+1$, pad to length $N$, transform with
+\eqref{eq:ssa-root}, multiply pointwise, and apply the inverse transform.
+Return the balanced integer representatives of the first $L$ residues.
+\end{algorithm}
+
+\begin{theorem}[Correctness of single-modulus multiplication]
+Algorithm~\ref{alg:ssa-poly-mul} returns the exact product $fg$ in $\ZZ[x]$.
+\end{theorem}
+
+\begin{proof}
+The first inequality in \eqref{eq:ssa-parameter-conditions} ensures that the
+principal $N$th root of Lemma~\ref{lem:fermat-principal-root} exists.  Hence
+the transform computes the coefficient convolution modulo $P$ by
+Theorem~\ref{thm:ring-convolution} and
+Corollary~\ref{cor:zero-padded-convolution}.
+
+The second inequality and \eqref{eq:ntt-coefficient-bound} give
+\[
+ 2|d_k|<2^K<P.
+\]
+Thus $|d_k|<P/2$, so the true integer coefficient is the unique balanced
+representative of its residue modulo $P$.
+\end{proof}
+
+\begin{theorem}[Bit complexity]\label{thm:ssa-poly-complexity}
+With $N,K$ as in Algorithm~\ref{alg:ssa-poly-mul}, suppose multiplication of
+two $K$-bit integers costs $\MZ(K)$.  Then the transform multiplication has
+bit complexity
+\begin{equation}\label{eq:ssa-complexity}
+ O\bigl(NK\log N+N\MZ(K)\bigr),
+\end{equation}
+and uses $O(NK)$ bits of transform storage.
+\end{theorem}
+
+\begin{proof}
+There are $O(N\log N)$ butterflies in the two forward and one inverse
+transforms.  Additions, subtractions and multiplication by the power-of-two
+twiddles each cost $O(K)$ bits, so all transform stages together cost
+$O(NK\log N)$.  Normalization by $N^{-1}$ is also multiplication by a power
+of two modulo $P$ and costs $O(NK)$.
+
+There are $N$ pointwise products of $K$-bit residues, costing
+$O(N\MZ(K))$.  Encoding, balanced reconstruction and zero padding touch
+$O(NK)$ bits and are absorbed.  The transform arrays contain $O(N)$ residues
+of $O(K)$ bits each.
+\end{proof}
+
+The constraint $N\leq2K$ is important.  This simple one-modulus method is most
+naturally aimed at the regime in which coefficient size is at least comparable
+to polynomial length.  More elaborate Sch\"onhage--Strassen constructions
+split data recursively and do not retain this restriction in the same simple
+form.
+
+\section{NTT versus $2^K+1$ transforms}
+
+Both methods use exactly the same Fourier and convolution theorems.  Their
+arithmetic costs are distributed differently.
+
+For an NTT, every transform is over a word-size prime, so butterfly arithmetic
+is inexpensive; large output coefficients require several transforms and CRT
+reconstruction.  For a $2^K+1$ transform, one large residue ring suffices and
+CRT disappears.  The twiddle factors are powers of two, so they reduce to
+shifts and signed folds, but the $N$ pointwise products are genuine $K$-bit
+multiplications.
+
+This distinction explains the useful parameter regimes.  NTT multiplication
+is attractive when enough suitable word primes are available and the number of
+CRT primes is moderate.  The $2^K+1$ method becomes attractive when coefficient
+size is large relative to length, because it avoids repeating the entire
+transform for many CRT primes while retaining cheap twiddle multiplication.
+
+Cache-aware matrix Fourier algorithms change the order in which the same
+butterflies are performed.  Truncated Fourier transforms avoid work associated
+with known zero inputs or unwanted outputs.  Neither changes the algebraic
+correctness arguments of this chapter, so they can be added later without
+changing the transform interface or the convolution proofs.
+
+
 \begin{thebibliography}{99}
 
 \bibitem{KaratsubaOfman1962}
@@ -8145,6 +8598,34 @@ Book homepage:
 \url{https://vonzurgathen.online/modern-computer-algebra/};
 publisher excerpt:
 \url{https://assets.cambridge.org/97811070/39032/excerpt/9781107039032_excerpt.pdf}.
+
+
+\bibitem{CooleyTukey1965}
+J.~W.~Cooley and J.~W.~Tukey,
+\emph{An Algorithm for the Machine Calculation of Complex Fourier Series},
+Mathematics of Computation \textbf{19} (1965), 297--301.
+\newline
+\url{https://doi.org/10.1090/S0025-5718-1965-0178586-1};
+freely available scan:
+\url{https://www.cs.jhu.edu/~misha/ReadingSeminar/Papers/Cooley65.pdf}.
+
+\bibitem{Pollard1971}
+J.~M.~Pollard,
+\emph{The Fast Fourier Transform in a Finite Field},
+Mathematics of Computation \textbf{25} (1971), 365--374.
+\newline
+\url{https://doi.org/10.1090/S0025-5718-1971-0301966-0};
+AMS PDF:
+\url{https://www.ams.org/mcom/1971-25-114/S0025-5718-1971-0301966-0/S0025-5718-1971-0301966-0.pdf}.
+
+\bibitem{SchonhageStrassen1971}
+A.~Sch\"onhage and V.~Strassen,
+\emph{Schnelle Multiplikation gro\ss er Zahlen},
+Computing \textbf{7} (1971), 281--292.
+\newline
+\url{https://doi.org/10.1007/BF02242355};
+author publication list:
+\url{https://pages.iai.uni-bonn.de/schoenhage_arnold/publis.html}.
 
 \end{thebibliography}
 
