@@ -99,6 +99,63 @@ static int compare_toom3(sc_context *ctx, const sc_value *a, const sc_value *b)
     return ok;
 }
 
+
+static sc_value *make_ssa_poly(sc_context *ctx, sc_parent *r, size_t n,
+                               size_t bits, unsigned seed)
+{
+    sc_value *f = sc_value_new_zz_poly_checked(ctx, r, n);
+
+    if (f == NULL)
+        return NULL;
+    for (size_t i = 0; i < n; i++) {
+        unsigned long v = (unsigned long)(seed + 17 * i + i * i + 1);
+
+        mpz_set_ui(f->data.zz_poly.coeff[i], v);
+        if (bits != 0)
+            mpz_setbit(f->data.zz_poly.coeff[i], bits - 1);
+        if ((i + seed) & 1)
+            mpz_neg(f->data.zz_poly.coeff[i], f->data.zz_poly.coeff[i]);
+    }
+    return f;
+}
+
+static int test_ssa_case(sc_context *ctx, sc_parent *r, size_t an, size_t bn,
+                         size_t abits, size_t bbits, unsigned seed)
+{
+    sc_value *a = make_ssa_poly(ctx, r, an, abits, seed);
+    sc_value *b = make_ssa_poly(ctx, r, bn, bbits, seed + 1000);
+    sc_value *want = a && b ? sc_zz_poly_mul_classical(ctx, a, b) : NULL;
+    sc_value *got = a && b ? sc_zz_poly_mul_ssa(ctx, a, b) : NULL;
+    int ok = same_poly(want, got);
+
+    sc_value_free_many(4, a, b, want, got);
+    return ok;
+}
+
+static int test_ssa(sc_context *ctx, sc_parent *r)
+{
+    static const size_t cases[][4] = {
+        { 1, 1, 20, 19 }, { 7, 5, 90, 93 }, { 19, 23, 260, 257 },
+        { 40, 37, 700, 711 }, { 70, 65, 20, 23 }
+    };
+
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
+        if (!test_ssa_case(ctx, r, cases[i][0], cases[i][1], cases[i][2],
+                           cases[i][3], (unsigned)(21000 + i)))
+            return 0;
+    {
+        sc_value *z = sc_value_new_zz_poly_checked(ctx, r, 0);
+        sc_value *a = make_ssa_poly(ctx, r, 9, 80, 22000);
+        sc_value *p = z && a ? sc_zz_poly_mul_ssa(ctx, z, a) : NULL;
+        int ok = p != NULL && p->data.zz_poly.length == 0;
+
+        sc_value_free_many(3, z, a, p);
+        if (!ok)
+            return 0;
+    }
+    return 1;
+}
+
 static int test_power(sc_context *ctx, sc_parent *r)
 {
     sc_value *f = make_poly(ctx, r, 7, 27182);
@@ -426,7 +483,8 @@ int main(void)
     sc_parent r = { "PolynomialRing(ZZ)", SC_PARENT_POLY, &SC_ZZ, "x" };
 
     sc_context_init(&ctx);
-    if (!test_power(&ctx, &r) || !test_grid(&ctx, &r) || !test_dispatch(&ctx, &r) ||
+    if (!test_ssa(&ctx, &r) || !test_power(&ctx, &r) || !test_grid(&ctx, &r) ||
+        !test_dispatch(&ctx, &r) ||
         !test_toom3_dispatch(&ctx, &r) || !test_recursive_toom3(&ctx, &r) ||
         !test_karatsuba_dispatch(&ctx, &r) || !test_cancellation(&ctx, &r) ||
         !test_balanced_mulmid(&ctx, &r) || !test_toom63_mulmid(&ctx, &r) ||
