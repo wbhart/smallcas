@@ -29,6 +29,8 @@ extern size_t sc_tune_mul_ssa_cutoff;
 #define SC_MUL_SSA_CUTOFF ((size_t)180)
 #endif
 
+#define SC_FFT_MFA_BASE_LOG ((unsigned)8)
+#define SC_SSA_MFA_CUTOFF_LOG ((unsigned)15)
 #define SC_MULLOW_DC_CUTOFF ((size_t)16)
 #define SC_MULMID_CLASSICAL_CUTOFF ((size_t)16)
 #define SC_MULMID_TOOM63_CUTOFF ((size_t)48)

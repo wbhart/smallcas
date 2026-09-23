@@ -86,6 +86,24 @@ static void sc_ssa_export(mpz_ptr z, mp_srcptr a, const sc_fft_mod *m, mp_ptr t)
         mpz_neg(z, z);
 }
 
+static void sc_ssa_forward(mp_ptr a, const sc_fft_plan *p, const sc_fft_mod *m,
+                           mp_ptr scratch)
+{
+    if (p->logn >= SC_SSA_MFA_CUTOFF_LOG)
+        sc_fft_forward_mfa(a, p, m, scratch);
+    else
+        sc_fft_forward(a, p, m, scratch);
+}
+
+static void sc_ssa_inverse(mp_ptr a, const sc_fft_plan *p, const sc_fft_mod *m,
+                           mp_ptr scratch)
+{
+    if (p->logn >= SC_SSA_MFA_CUTOFF_LOG)
+        sc_fft_inverse_mfa(a, p, m, scratch);
+    else
+        sc_fft_inverse(a, p, m, scratch);
+}
+
 sc_value *sc_zz_poly_mul_ssa(sc_context *ctx, const sc_value *a, const sc_value *b)
 {
     size_t an, bn, outn, k, limbs, words;
@@ -123,12 +141,12 @@ sc_value *sc_zz_poly_mul_ssa(sc_context *ctx, const sc_value *a, const sc_value 
         sc_ssa_import(sc_fft_entry(av, i, &m), a->data.zz_poly.coeff[i], &m);
     for (size_t i = 0; i < bn; i++)
         sc_ssa_import(sc_fft_entry(bv, i, &m), b->data.zz_poly.coeff[i], &m);
-    sc_fft_forward(av, &p, &m, work);
-    sc_fft_forward(bv, &p, &m, work);
+    sc_ssa_forward(av, &p, &m, work);
+    sc_ssa_forward(bv, &p, &m, work);
     for (size_t i = 0; i < p.len; i++)
         sc_fft_mul(sc_fft_entry(av, i, &m), sc_fft_entry(av, i, &m),
                    sc_fft_entry(bv, i, &m), &m, work);
-    sc_fft_inverse(av, &p, &m, work);
+    sc_ssa_inverse(av, &p, &m, work);
     for (size_t i = 0; i < outn; i++)
         sc_ssa_export(r->data.zz_poly.coeff[i], sc_fft_entry_const(av, i, &m),
                       &m, work);

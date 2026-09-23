@@ -8110,11 +8110,72 @@ stages.  Each butterfly has two additions or subtractions and at most one
 twiddle multiplication.
 \end{proof}
 
+\section{A cache-friendly matrix Fourier algorithm}
+
+The full transform can be reordered into shorter row and column transforms.
+This is useful in its own right for large coefficients, and it also gives the
+organization needed by the cache-friendly TFT and ITFT of Harvey
+\cite{Harvey2008CacheTFT}.  We use the weighted, bit-reversed transform
+\begin{equation}\label{eq:weighted-dft}
+ \widehat a_j=\zeta^{j'}\sum_{i=0}^{L-1}\omega_L^{ij'}a_i,
+ \qquad 0\leq j<L,
+\end{equation}
+where $j'$ is the $\log_2L$-bit reversal of $j$.  The ordinary forward
+transform is the case $\zeta=1$.
+
+Write $L=L_1L_2$, with both factors powers of two, and index an entry by
+$i=i_2+L_2i_1$.  If $j=j_2+L_2j_1$, then bit reversal gives
+$j'=j_1'+L_1j_2'$.  Define
+\begin{equation}\label{eq:mfa-columns}
+ b_{k_2+L_2k_1}=
+ (\zeta\omega_L^{k_2})^{k_1'}
+ \sum_{m=0}^{L_1-1}\omega_{L_1}^{mk_1'}a_{k_2+L_2m}.
+\end{equation}
+Then
+\begin{equation}\label{eq:mfa-rows}
+ \widehat a_{j_2+L_2j_1}=
+ (\zeta^{L_1})^{j_2'}
+ \sum_{r=0}^{L_2-1}\omega_{L_2}^{rj_2'}b_{r+L_2j_1}.
+\end{equation}
+Thus the transform consists of $L_2$ weighted column transforms of length
+$L_1$, followed by $L_1$ weighted row transforms of length $L_2$.
+
+\begin{theorem}[Matrix Fourier decomposition]\label{thm:mfa}
+Equations~\eqref{eq:mfa-columns} and \eqref{eq:mfa-rows} compute the weighted
+transform \eqref{eq:weighted-dft}.  Reversing the row and column stages and
+using inverse weights, followed by multiplication by $L^{-1}$, gives the
+inverse transform.  The number of radix-$2$ butterflies is unchanged.
+\end{theorem}
+
+\begin{proof}
+Substitute \eqref{eq:mfa-columns} into \eqref{eq:mfa-rows}.  Since
+$\omega_{L_1}=\omega_L^{L_2}$ and
+$\omega_{L_2}=\omega_L^{L_1}$, the exponent of $\omega_L$ becomes
+\[
+ L_2 i_1j_1'+i_2j_1'+L_1i_2j_2'
+ \equiv(L_2i_1+i_2)(j_1'+L_1j_2')=ij'\pmod L.
+\]
+The powers of $\zeta$ combine to $\zeta^{j_1'+L_1j_2'}=\zeta^{j'}$,
+which proves the forward identity.  Both stages are invertible weighted DFTs,
+so applying their inverses in reverse order and normalizing by $L^{-1}$ proves
+the inverse statement.  The decomposition only changes the order in which the
+same Cooley--Tukey butterflies are evaluated.
+\end{proof}
+
+The implementation splits the logarithmic length approximately in half and
+passes a stride, a root stride and the exponent of $\zeta$ through the
+recursive calls.  Small subtransforms use a weighted radix-$2$ kernel.  This
+is deliberate: the later TFT needs the same weighted strided transforms on
+partially populated rows and columns, so the full MFA does not introduce a
+second incompatible transform representation.  The SSA backend currently
+uses the MFA only for sufficiently large transforms; the word-prime NTT keeps
+the ordinary radix-$2$ schedule until a separate crossover is established.
+
 Pairing DIF forward transforms with a DIT inverse is useful because no explicit
 bit-reversal permutation is required between transformation and pointwise
-multiplication.  Matrix Fourier algorithms and truncated Fourier transforms
-reschedule or omit butterflies, but they use the same DFT and convolution
-identities established above.
+multiplication.  The MFA preserves the same ordering.  Truncated Fourier
+transforms will omit butterflies associated with known zero inputs or
+unwanted outputs while retaining the same DFT and convolution identities.
 
 \section{Number-theoretic transforms and CRT multiplication}
 
@@ -8543,6 +8604,13 @@ Journal of Symbolic Computation \textbf{47} (2012), 954--967.
 \url{https://doi.org/10.1016/j.jsc.2012.02.001};
 author PDF:
 \url{https://web.maths.unsw.edu.au/~davidharvey/research/mulmid/mulmid.pdf}.
+
+\bibitem{Harvey2008CacheTFT}
+D.~Harvey,
+\emph{A cache-friendly truncated FFT},
+Theoretical Computer Science \textbf{410} (2009), 2649--2658.
+\newline
+\url{https://arxiv.org/abs/0810.3203}
 
 \bibitem{Harvey2009}
 D.~Harvey,
