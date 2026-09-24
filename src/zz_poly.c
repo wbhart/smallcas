@@ -1172,8 +1172,8 @@ sc_value *sc_zz_poly_pseudodiv_impl(sc_context *ctx,
     return sc_value_new_pair_take_checked(ctx, q, r);
 }
 
-static sc_value *sc_zz_poly_pseudorem_only(sc_context *ctx,
-                                             const sc_value *a, const sc_value *b)
+sc_value *sc_zz_poly_pseudorem_classical(sc_context *ctx,
+                                            const sc_value *a, const sc_value *b)
 {
     size_t an = SC_ZN(a), bn = SC_ZN(b), d = an >= bn ? an - bn + 1 : 0, i, k;
     sc_value *r;
@@ -1204,6 +1204,14 @@ static sc_value *sc_zz_poly_pseudorem_only(sc_context *ctx,
     }
     mpz_clears(c, scale, NULL);
     return r;
+}
+
+sc_value *sc_zz_poly_pseudorem_fast(sc_context *ctx,
+                                    const sc_value *a, const sc_value *b)
+{
+    sc_value *qr = sc_zz_poly_pseudodiv_fast(ctx, a, b);
+
+    return sc_value_pair_take(qr, 1);
 }
 
 sc_value *sc_zz_poly_scalar_divexact_impl(sc_context *ctx, const sc_value *a,
@@ -1275,7 +1283,7 @@ sc_value *sc_zz_poly_gcd_pseudo_impl(sc_context *ctx, const sc_value *a,
         v = p;
     }
     while (v->data.zz_poly.length != 0) {
-        w = sc_zz_poly_pseudorem_only(ctx, u, v);
+        w = sc_zz_poly_pseudorem(ctx, u, v);
         p = w ? sc_zz_poly_primitive_part_impl(ctx, w) : NULL;
         sc_value_free_many(2, u, w);
         if (p == NULL)
@@ -1599,7 +1607,7 @@ sc_value *sc_zz_poly_subres_prs_last(sc_context *ctx, const sc_value *a, const s
         return NULL;
     d = SC_ZN(s.u) - SC_ZN(s.v);
     mpz_pow_ui(s.hp, SC_ZLC(s.v), (unsigned long)d);
-    s.w = sc_zz_poly_pseudorem_only(ctx, s.u, s.v);
+    s.w = sc_zz_poly_pseudorem(ctx, s.u, s.v);
     if (SC_ZN(s.w) == 0)
         return sc_zz_poly_subres_ws_finish(ctx, &s, s.v, s.hp);
     if (((d + 1) & 1) != 0)
@@ -1612,7 +1620,7 @@ sc_value *sc_zz_poly_subres_prs_last(sc_context *ctx, const sc_value *a, const s
     sc_value_free_null(&s.u);
     while (1) {
         d = SC_ZN(s.v) - SC_ZN(s.w);
-        s.z = sc_zz_poly_pseudorem_only(ctx, s.v, s.w);
+        s.z = sc_zz_poly_pseudorem(ctx, s.v, s.w);
         if (SC_ZN(s.z) == 0)
             break;
         if (((d + 1) & 1) != 0)

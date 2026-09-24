@@ -190,6 +190,27 @@ static int test_fast_pseudodiv(sc_context *ctx, sc_parent *r)
     return 1;
 }
 
+static int test_fast_pseudorem(sc_context *ctx, sc_parent *r)
+{
+    static const size_t nvals[] = { 17, 33, 65 };
+    size_t j;
+
+    srand(72211);
+    for (j = 0; j < sizeof(nvals) / sizeof(nvals[0]); j++) {
+        size_t n = nvals[j];
+        sc_value *a = random_poly(ctx, r, 2 * n - 1);
+        sc_value *b = random_poly(ctx, r, n);
+        sc_value *rc = sc_zz_poly_pseudorem_classical(ctx, a, b);
+        sc_value *rf = sc_zz_poly_pseudorem_fast(ctx, a, b);
+        int ok = same_poly(rc, rf);
+
+        sc_value_free_many(4, a, b, rc, rf);
+        if (!ok)
+            return 0;
+    }
+    return 1;
+}
+
 static int test_dc_division(sc_context *ctx, sc_parent *r)
 {
     size_t trial;
@@ -501,6 +522,7 @@ int main(void)
         !test_nondivisible_lead(&ctx, &r) || !test_pseudodiv(&ctx, &r) ||
         !test_short_pseudodiv(&ctx, &r) || !test_random_divrem(&ctx, &r) ||
         !test_random_pseudodiv(&ctx, &r) || !test_fast_pseudodiv(&ctx, &r) ||
+        !test_fast_pseudorem(&ctx, &r) ||
         !test_dc_division(&ctx, &r) ||
         !test_dc_exact(&ctx, &r) || !test_dc_short_quotient_long_divisor(&ctx, &r) ||
         !test_dc_nondivisible(&ctx, &r) ||

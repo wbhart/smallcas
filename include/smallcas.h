@@ -361,6 +361,10 @@ sc_value *sc_zz_poly_divrem_mulders(sc_context *ctx,
                                     const sc_value *a, const sc_value *b);
 sc_value *sc_zz_poly_pseudodiv_impl(sc_context *ctx,
                                     const sc_value *a, const sc_value *b);
+sc_value *sc_zz_poly_pseudorem_classical(sc_context *ctx,
+                                            const sc_value *a, const sc_value *b);
+sc_value *sc_zz_poly_pseudorem_fast(sc_context *ctx,
+                                    const sc_value *a, const sc_value *b);
 sc_value *sc_zz_poly_add(sc_context *ctx, const sc_value *a, const sc_value *b);
 sc_value *sc_zz_poly_sub(sc_context *ctx, const sc_value *a, const sc_value *b);
 sc_value *sc_zz_poly_mul(sc_context *ctx, const sc_value *a, const sc_value *b);
@@ -379,6 +383,7 @@ sc_value *sc_zz_poly_divexact(sc_context *ctx, const sc_value *a, const sc_value
 sc_value *sc_zz_poly_quo(sc_context *ctx, const sc_value *a, const sc_value *b);
 sc_value *sc_zz_poly_divrem(sc_context *ctx, const sc_value *a, const sc_value *b);
 sc_value *sc_zz_poly_pseudodiv(sc_context *ctx, const sc_value *a, const sc_value *b);
+sc_value *sc_zz_poly_pseudorem(sc_context *ctx, const sc_value *a, const sc_value *b);
 sc_value *sc_zz_poly_scalar_divexact_impl(sc_context *ctx, const sc_value *a,
                                           const sc_value *b);
 sc_value *sc_zz_poly_content_impl(sc_context *ctx, const sc_value *a);

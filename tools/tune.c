@@ -23,8 +23,12 @@ typedef struct {
     tune_result bidir_base, mulders_base;
     tune_result quo_dc, quo_mulders, quo_newton;
     tune_result divrem_dc, divrem_mulders, divrem_newton;
-    tune_result divexact_bidir, pseudodiv_fast;
+    tune_result divexact_bidir, pseudodiv_fast, pseudorem_fast;
 } division_tuning;
+
+typedef struct {
+    tune_result subresultant;
+} gcd_tuning;
 
 /* Division crossovers are deliberately bounded: some may never occur in a
    useful range for ZZ[x], and tuning must terminate even in that case. */
@@ -387,7 +391,7 @@ static int write_tuning(const tune_result *ks, const tune_result *toom,
                         size_t high_ntt, size_t high_ssa,
                         const tune_result *midclass, const tune_result *mid63,
                         size_t mid_ntt, size_t mid_ssa,
-                        const division_tuning *div)
+                        const division_tuning *div, const gcd_tuning *gcd)
 {
     const char *tmp = "include/tuning.h.tmp";
     const char *dst = "include/tuning.h";
@@ -446,6 +450,8 @@ static int write_tuning(const tune_result *ks, const tune_result *toom,
     WRITE_CUTOFF("SC_QUO_DC_CUTOFF", div->quo_dc.cut);
     WRITE_CUTOFF("SC_DIVEXACT_BIDIR_CUTOFF", div->divexact_bidir.cut);
     WRITE_CUTOFF("SC_PSEUDODIV_FAST_CUTOFF", div->pseudodiv_fast.cut);
+    WRITE_CUTOFF("SC_PSEUDOREM_FAST_CUTOFF", div->pseudorem_fast.cut);
+    WRITE_CUTOFF("SC_GCD_SUBRESULTANT_CUTOFF", gcd->subresultant.cut);
 #undef WRITE_CUTOFF
     fputs("#endif\n\n#include \"tuning_defaults.h\"\n\n#endif\n", f);
     bad = ferror(f);
@@ -898,10 +904,10 @@ static tune_result tune_div_pair(sc_context *ctx, sc_parent *r,
     return tr;
 }
 
-static tune_result tune_pseudodiv_pair(sc_context *ctx, sc_parent *r,
-                                       gmp_randstate_t state, const char *name,
-                                       size_t bits, size_t lo, size_t hi,
-                                       size_t fallback)
+static tune_result tune_pseudo_pair(sc_context *ctx, sc_parent *r,
+                                    gmp_randstate_t state, const char *name,
+                                    mul_fn old, mul_fn new, size_t bits,
+                                    size_t lo, size_t hi, size_t fallback)
 {
     tune_result tr = { 0, 0, fallback, 0.0, 0.0 };
     size_t streak = 0, first_win = 0, points = 0;
@@ -916,9 +922,8 @@ static tune_result tune_pseudodiv_pair(sc_context *ctx, sc_parent *r,
             fprintf(stderr, "out of memory while tuning pseudo-division\n");
             exit(1);
         }
-        q = ratio_bounded(ctx, sc_zz_poly_pseudodiv_impl,
-                          sc_zz_poly_pseudodiv_fast, a, b, &mad);
-        printf("  qn=%-6zu bits=%-4zu fast/classical=%7.4f  MAD=%5.2f%%\n",
+        q = ratio_bounded(ctx, old, new, a, b, &mad);
+        printf("  qn=%-6zu bits=%-4zu new/old=%7.4f  MAD=%5.2f%%\n",
                n, bits, q, 100.0 * mad);
         sc_value_free_many(2, a, b);
         if (q >= 1.05)
@@ -1138,12 +1143,86 @@ static division_tuning tune_division(sc_context *ctx, sc_parent *r,
         256, 1, 0, 1, 8, 1024, divexact0);
     sc_tune_divexact_bidir_cutoff = d.divexact_bidir.cut;
 
-    d.pseudodiv_fast = tune_pseudodiv_pair(ctx, r, state,
+    d.pseudodiv_fast = tune_pseudo_pair(ctx, r, state,
         "pseudo-division classical -> scaled-Newton fast path (32-bit coefficients)",
+        sc_zz_poly_pseudodiv_impl, sc_zz_poly_pseudodiv_fast,
         32, 8, 256, (size_t)-1);
     sc_tune_pseudodiv_fast_cutoff = d.pseudodiv_fast.cut;
+    d.pseudorem_fast = tune_pseudo_pair(ctx, r, state,
+        "pseudo-remainder classical -> fast pseudo-division remainder (32-bit coefficients)",
+        sc_zz_poly_pseudorem_classical, sc_zz_poly_pseudorem_fast,
+        32, 8, 256, (size_t)-1);
+    sc_tune_pseudorem_fast_cutoff = d.pseudorem_fast.cut;
     return d;
 }
+
+
+static gcd_tuning tune_gcd(sc_context *ctx, sc_parent *r, gmp_randstate_t state)
+{
+    gcd_tuning g = { 0 };
+    tune_result *tr = &g.subresultant;
+    const size_t lo = 4, hi = 64, fallback = sc_tune_gcd_subresultant_cutoff;
+    size_t streak = 0, first_win = 0, points = 0;
+
+    tr->cut = fallback;
+    puts("\nGCD tuning: small primitive pseudo-Euclidean -> Brown subresultant.");
+    printf("  bounded search: n <= %zu, at most %u sampled sizes\n",
+           hi, DIV_TUNE_MAX_POINTS);
+    for (size_t n = lo; n <= hi && points < DIV_TUNE_MAX_POINTS; points++) {
+        sc_value *a = random_poly(ctx, r, n, 32, state);
+        sc_value *b = random_poly(ctx, r, n > 1 ? n - 1 : 1, 32, state);
+        double mad = 0.0, q;
+
+        if (a == NULL || b == NULL) {
+            fprintf(stderr, "out of memory while tuning gcd\n");
+            exit(1);
+        }
+        q = ratio_bounded(ctx, sc_zz_poly_gcd_pseudo_impl,
+                          sc_zz_poly_gcd_subresultant_impl, a, b, &mad);
+        printf("  n=%-7zu subres/pseudo=%7.4f  MAD=%5.2f%%\n",
+               n, q, 100.0 * mad);
+        sc_value_free_many(2, a, b);
+        if (q >= 1.05) {
+            tr->loss = n;
+            tr->loss_ratio = q;
+            streak = 0;
+        } else if (q <= 0.95) {
+            if (tr->loss == 0) {
+                tr->win = n;
+                tr->win_ratio = q;
+                tr->cut = n;
+                break;
+            }
+            if (streak++ == 0)
+                first_win = n;
+            if (streak >= 2) {
+                tr->win = first_win;
+                tr->win_ratio = q;
+                tr->cut = tr->loss + (first_win - tr->loss + 1) / 2;
+                break;
+            }
+        } else
+            streak = 0;
+        if (n == hi)
+            break;
+        n = next_size(n) > hi ? hi : next_size(n);
+    }
+    if (tr->win == 0 && tr->loss != 0) {
+        tr->cut = hi + 1;
+        printf("  no Brown win through %zu; using pseudo gcd only below bounded cutoff %zu\n",
+               hi, tr->cut);
+    } else if (tr->win == 0) {
+        printf("  no stable 5%% preference; keeping cutoff %zu\n", tr->cut);
+    } else if (tr->loss == 0) {
+        printf("  Brown already >5%% faster; cutoff %zu\n", tr->cut);
+    } else {
+        printf("  5%% bracket [%zu, %zu], midpoint %zu\n",
+               tr->loss, tr->win, tr->cut);
+    }
+    sc_tune_gcd_subresultant_cutoff = tr->cut;
+    return g;
+}
+
 
 static size_t ntt_cutoff_full(sc_context *ctx, sc_parent *r, gmp_randstate_t state,
                               const tune_result *tr)
@@ -1188,6 +1267,7 @@ int main(void)
     tune_result low_ntt_r, low_ssa_r, high_ntt_r, high_ssa_r;
     tune_result midclass, mid63, mid_ntt_r, mid_ssa_r;
     division_tuning div;
+    gcd_tuning gcd;
     size_t ntt_cut, toom_fallback, low_ntt_cut, low_ssa_cut;
     size_t high_ntt_cut, high_ssa_cut, mid_ntt_cut, mid_ssa_cut, mid63_lo;
     unsigned mfa_cut;
@@ -1289,10 +1369,11 @@ int main(void)
     sc_tune_mulmid_ssa_cutoff = mid_ssa_cut;
 
     div = tune_division(&ctx, &r, state);
+    gcd = tune_gcd(&ctx, &r, state);
 
     if (!write_tuning(&ks, &toom, &kar, &low, &ntt, ntt_cut, &ssa, mfa_cut,
                       &lowdc, low_ntt_cut, low_ssa_cut, high_ntt_cut, high_ssa_cut,
-                      &midclass, &mid63, mid_ntt_cut, mid_ssa_cut, &div)) {
+                      &midclass, &mid63, mid_ntt_cut, mid_ssa_cut, &div, &gcd)) {
         gmp_randclear(state);
         sc_context_clear(&ctx);
         return 1;

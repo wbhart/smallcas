@@ -59,12 +59,20 @@ the generated chain remains ordered.
 
 Division tuning covers the recursive series-quotient and inverse bases, ordinary
 quotient/divrem, Mulders short division, Newton/Karp--Markstein division, bidirectional
-exact division and fast pseudo-division.  These fast division algorithms inherit the
-tuned low and middle products, hence NTT/SSA, rather than needing a separate FFT division
-kernel.  Division searches are deliberately bounded in degree, number of sampled sizes
-and timing samples.  A crossover requires a measured 5% loss followed by two consecutive
-5% wins, so an isolated early pocket is ignored.  A missing crossover is a valid result;
-optional paths such as public Mulders, Newton or fast pseudo-division remain disabled.
+exact division, fast pseudo-division and the pseudo-remainder-only crossover used by PRS
+algorithms.  These fast division algorithms inherit the tuned low and middle products,
+hence NTT/SSA, rather than needing a separate FFT division kernel.  Division searches are
+deliberately bounded in degree, number of sampled sizes and timing samples.  A crossover
+requires a measured 5% loss followed by two consecutive 5% wins, so an isolated early
+pocket is ignored.  A missing crossover is a valid result; optional paths such as public
+Mulders, Newton or the fast pseudo-division/remainder paths remain disabled.
+
+GCD tuning additionally chooses the small-size boundary between the primitive
+pseudo-Euclidean gcd and Brown's subresultant PRS.  The search is capped at length 64; if
+Brown does not win in that range, primitive gcd is still used only through that bounded
+small-size range, so the public gcd retains the subresultant coefficient-growth guarantee
+asymptotically.  XGCD has no separate top-level crossover: its subresultant certificate
+algorithm already inherits tuned pseudo-division and polynomial multiplication.
 
 Only after every tuning stage succeeds does the tuner atomically replace
 `include/tuning.h`.  Subsequent source patches therefore change `tuning_defaults.h`, not
@@ -1295,3 +1303,20 @@ The implementation adds independent CRT-NTT and SSA wraparound middle-product ke
 Tests compare both exact backends with the classical middle product across transform
 boundaries and multi-prime CRT cases.  The balanced dispatcher now includes these kernels;
 `make tune` measures their crossovers after tuning the classical/Toom42/Toom63 chain.
+
+
+## Iteration 57: production GCD tuning
+
+Brown's subresultant PRS previously called the classical pseudo-remainder kernel
+directly, bypassing the tuned pseudo-division machinery.  Pseudo-remainder now has its
+own classical/fast cutoff; the fast side uses the scaled-Newton pseudo-division and
+discards the quotient.  Primitive pseudo-Euclidean gcd and Brown subresultant gcd also
+have a bounded small-size dispatcher crossover.  Resultants inherit the pseudo-remainder
+choice because they use the same Brown PRS.
+
+No new division mathematics was added to `algorithms.tex`: low-product remainder
+recovery, Mulders division, Newton/Karp--Markstein division, bidirectional exact division
+and fast pseudo-division were already documented there.  The changes in this iteration
+are dispatch and tuning choices.  The experimental fraction-free and quotient-boot HGCD
+paths retain their existing base cutoff and are not part of the production gcd/xgcd
+dispatch.

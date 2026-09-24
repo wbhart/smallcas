@@ -32,3 +32,6 @@ size_t sc_tune_divrem_newton_cutoff = 64;
 size_t sc_tune_quo_dc_cutoff = 32;
 size_t sc_tune_divexact_bidir_cutoff = 32;
 size_t sc_tune_pseudodiv_fast_cutoff = (size_t)-1;
+
+size_t sc_tune_pseudorem_fast_cutoff = (size_t)-1;
+size_t sc_tune_gcd_subresultant_cutoff = 5;

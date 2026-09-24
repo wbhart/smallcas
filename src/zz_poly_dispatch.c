@@ -583,6 +583,24 @@ sc_value *sc_zz_poly_pseudodiv(sc_context *ctx, const sc_value *a, const sc_valu
     return sc_zz_poly_pseudodiv_impl(ctx, a, b);
 }
 
+sc_value *sc_zz_poly_pseudorem(sc_context *ctx, const sc_value *a, const sc_value *b)
+{
+    size_t an, bn, qn;
+
+    if (a == NULL || b == NULL)
+        return NULL;
+    an = a->data.zz_poly.length;
+    bn = b->data.zz_poly.length;
+    if (bn == 0) {
+        sc_set_error(ctx, "polynomial pseudo-remainder by zero");
+        return NULL;
+    }
+    qn = an >= bn ? an - bn + 1 : 0;
+    if (qn >= SC_PSEUDOREM_FAST_CUTOFF && bn > 1)
+        return sc_zz_poly_pseudorem_fast(ctx, a, b);
+    return sc_zz_poly_pseudorem_classical(ctx, a, b);
+}
+
 sc_value *sc_zz_poly_scalar_divexact(sc_context *ctx, const sc_value *a,
                                      const sc_value *b)
 {
@@ -614,8 +632,14 @@ sc_value *sc_zz_poly_gcd_pseudo(sc_context *ctx, const sc_value *a, const sc_val
 
 sc_value *sc_zz_poly_gcd(sc_context *ctx, const sc_value *a, const sc_value *b)
 {
+    size_t n;
+
     if (a == NULL || b == NULL)
         return NULL;
+    n = a->data.zz_poly.length > b->data.zz_poly.length ?
+        a->data.zz_poly.length : b->data.zz_poly.length;
+    if (n < SC_GCD_SUBRESULTANT_CUTOFF)
+        return sc_zz_poly_gcd_pseudo_impl(ctx, a, b);
     return sc_zz_poly_gcd_subresultant_impl(ctx, a, b);
 }
 
