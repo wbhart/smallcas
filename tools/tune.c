@@ -396,7 +396,8 @@ static int write_tuning(const tune_result *ks, const tune_result *toom,
                         const tune_result *midclass, const tune_result *mid63,
                         size_t mid_ntt, size_t mid_ssa,
                         const division_tuning *div, const gcd_tuning *gcd,
-                        const resultant_tuning *resultant)
+                        const resultant_tuning *resultant,
+                        const tune_result *taylor)
 {
     const char *tmp = "include/tuning.h.tmp";
     const char *dst = "include/tuning.h";
@@ -458,6 +459,7 @@ static int write_tuning(const tune_result *ks, const tune_result *toom,
     WRITE_CUTOFF("SC_PSEUDOREM_FAST_CUTOFF", div->pseudorem_fast.cut);
     WRITE_CUTOFF("SC_GCD_SUBRESULTANT_CUTOFF", gcd->subresultant.cut);
     WRITE_CUTOFF("SC_RESULTANT_SUBRESULTANT_CUTOFF", resultant->subresultant.cut);
+    WRITE_CUTOFF("SC_TAYLOR_CONV_CUTOFF", taylor->cut);
 #undef WRITE_CUTOFF
     fputs("#endif\n\n#include \"tuning_defaults.h\"\n\n#endif\n", f);
     bad = ferror(f);
@@ -1296,6 +1298,52 @@ static resultant_tuning tune_resultant(sc_context *ctx, sc_parent *r,
     return rt;
 }
 
+static tune_result tune_taylor(sc_context *ctx, sc_parent *r,
+                                gmp_randstate_t state)
+{
+    tune_result tr = { 0, 0, (size_t)-1, 0.0, 0.0 };
+    sc_value *c = sc_value_new_zz_checked(ctx);
+
+    if (c == NULL) {
+        fprintf(stderr, "out of memory while tuning Taylor shift\n");
+        exit(1);
+    }
+    mpz_set_ui(c->data.z, 10);
+    sc_tune_taylor_conv_cutoff = (size_t)-1;
+    puts("\nTaylor shift: phase-aware Horner/DC -> convolution.");
+    puts("  Test only the central dyadic phase n=3P/4; runtime also requires");
+    puts("  n/P in [5/8,13/16] and factorial-convolution K fill >=5/8.");
+    puts("  Bounded search through n=3072 (32-bit coefficients, shift 10).");
+    for (size_t p = 512; p <= 4096; p <<= 1) {
+        size_t n = 3 * (p >> 2);
+        sc_value *a = random_poly(ctx, r, n, 32, state);
+        double mad = 0.0, q;
+
+        if (a == NULL) {
+            fprintf(stderr, "out of memory while tuning Taylor shift\n");
+            exit(1);
+        }
+        q = ratio_bounded(ctx, sc_zz_poly_taylor_shift,
+                          sc_zz_poly_taylor_shift_convolution, a, c, &mad);
+        printf("  n=%-4zu conv/lower=%7.4f  MAD=%5.2f%%\n", n, q, 100.0 * mad);
+        sc_value_free(a);
+        if (q <= 0.95) {
+            tr.win = tr.cut = n;
+            tr.win_ratio = q;
+            break;
+        }
+        tr.loss = n;
+        tr.loss_ratio = q;
+    }
+    if (tr.win == 0)
+        puts("  no 5% convolution win through n=3072; disabling automatic convolution");
+    else
+        printf("  first central-phase 5%% win at n=%zu; cutoff %zu\n", tr.win, tr.cut);
+    sc_tune_taylor_conv_cutoff = tr.cut;
+    sc_value_free(c);
+    return tr;
+}
+
 static size_t ntt_cutoff_full(sc_context *ctx, sc_parent *r, gmp_randstate_t state,
                               const tune_result *tr)
 {
@@ -1341,6 +1389,7 @@ int main(void)
     division_tuning div;
     gcd_tuning gcd;
     resultant_tuning resultant;
+    tune_result taylor;
     size_t ntt_cut, toom_fallback, low_ntt_cut, low_ssa_cut;
     size_t high_ntt_cut, high_ssa_cut, mid_ntt_cut, mid_ssa_cut, mid63_lo;
     unsigned mfa_cut;
@@ -1444,11 +1493,12 @@ int main(void)
     div = tune_division(&ctx, &r, state);
     gcd = tune_gcd(&ctx, &r, state);
     resultant = tune_resultant(&ctx, &r, state);
+    taylor = tune_taylor(&ctx, &r, state);
 
     if (!write_tuning(&ks, &toom, &kar, &low, &ntt, ntt_cut, &ssa, mfa_cut,
                       &lowdc, low_ntt_cut, low_ssa_cut, high_ntt_cut, high_ssa_cut,
                       &midclass, &mid63, mid_ntt_cut, mid_ssa_cut, &div, &gcd,
-                      &resultant)) {
+                      &resultant, &taylor)) {
         gmp_randclear(state);
         sc_context_clear(&ctx);
         return 1;

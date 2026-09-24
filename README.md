@@ -1365,3 +1365,21 @@ iteration.  Experiments show that the convolution/D&C comparison is strongly
 phase-dependent when the transform length or Fermat modulus crosses a power of
 two, so a single server-derived cutoff would be misleading.  The named method
 allows direct benchmarking while preserving the existing default behaviour.
+
+## Iteration 60: phase-aware Taylor-shift dispatch
+
+The convolution Taylor shift has two visible dyadic costs: the transform length and the
+Fermat modulus exponent both round upward to powers of two.  The divide-and-conquer
+composition path also has strong dyadic phases, so a single unconditional crossover is a
+poor model.  Automatic dispatch therefore considers convolution only when the polynomial
+length lies in the central part of its dyadic band, `5/8 <= n/P <= 13/16`, where `P` is
+the least power of two at least `n`, and when the exact reconstruction-bit requirement
+fills at least `5/8` of the selected Fermat modulus.  Outside those phases the existing
+Horner/divide-and-conquer path is retained.
+
+`make tune` keeps this phase rule fixed and only tunes the minimum size at which it is
+worth enabling it.  It benchmarks `n = 3P/4` for `P = 512, 1024, 2048, 4096`, using
+32-bit coefficients and shift 10, and stops at the first 5% convolution win.  Thus the
+new stage has four bounded candidate points and cannot grow into an open-ended search.
+If no win is found through `n = 3072`, automatic convolution is disabled; the named
+`taylor_shift_conv` operation remains available.

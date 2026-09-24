@@ -433,6 +433,8 @@ sc_value *sc_zz_poly_taylor_shift_horner_impl(sc_context *ctx, const sc_value *a
 sc_value *sc_zz_poly_taylor_shift_divconquer_impl(sc_context *ctx,
                                                   const sc_value *a,
                                                   const sc_value *b);
+int sc_zz_poly_taylor_shift_convolution_preferred(const sc_value *a,
+                                                     const sc_value *c);
 sc_value *sc_zz_poly_taylor_shift_convolution_impl(sc_context *ctx,
                                                    const sc_value *a,
                                                    const sc_value *b);

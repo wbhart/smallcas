@@ -210,8 +210,9 @@ sc_value *sc_zz_poly_mul_ssa(sc_context *ctx, const sc_value *a, const sc_value 
     return sc_zz_poly_mul_ssa_core(ctx, a, b, outn, 0, outn, 0);
 }
 
-static int sc_ssa_taylor_params(size_t *k, unsigned *depth, unsigned *logn,
-                                const sc_value *a, const sc_value *c)
+static int sc_ssa_taylor_params(size_t *k, size_t *need_out, unsigned *depth,
+                                unsigned *logn, const sc_value *a,
+                                const sc_value *c)
 {
     size_t n = a->data.zz_poly.length, need, span, N, bs, bq;
     mpz_t s, q, t;
@@ -242,6 +243,8 @@ static int sc_ssa_taylor_params(size_t *k, unsigned *depth, unsigned *logn,
     need = bs + bq + 1;
     if (need < (N >> 1))
         need = N >> 1;
+    if (need_out != NULL)
+        *need_out = need;
     *k = GMP_NUMB_BITS;
     while (*k < need) {
         if (*k > SIZE_MAX / 2)
@@ -311,6 +314,29 @@ static void sc_ssa_taylor_extract(sc_value *r, mp_ptr av, mp_ptr rt, mp_ptr work
     mpz_clear(invfact);
 }
 
+int sc_zz_poly_taylor_shift_convolution_preferred(const sc_value *a,
+                                                     const sc_value *c)
+{
+    size_t n = a->data.zz_poly.length, k, need, p, lo, hi;
+    unsigned depth, logn, logp;
+
+    if (n < SC_TAYLOR_CONV_CUTOFF || n < 16)
+        return 0;
+    logp = sc_ssa_log2ceil(n);
+    if (logp >= sizeof(size_t) * 8)
+        return 0;
+    p = (size_t)1 << logp;
+    lo = 5 * (p >> 3);
+    hi = 13 * (p >> 4);
+    if (n < lo || n > hi)
+        return 0;
+    if (!sc_ssa_taylor_params(&k, &need, &depth, &logn, a, c))
+        return 0;
+    (void)depth;
+    (void)logn;
+    return need >= 5 * (k >> 3);
+}
+
 sc_value *sc_zz_poly_taylor_shift_convolution_impl(sc_context *ctx,
                                                    const sc_value *a,
                                                    const sc_value *c)
@@ -325,7 +351,7 @@ sc_value *sc_zz_poly_taylor_shift_convolution_impl(sc_context *ctx,
 
     if (n == 0 || mpz_sgn(c->data.z) == 0)
         return sc_value_copy_checked(ctx, a);
-    if (!sc_ssa_taylor_params(&k, &depth, &logn, a, c) ||
+    if (!sc_ssa_taylor_params(&k, NULL, &depth, &logn, a, c) ||
         !sc_fft_mod_init(&m, 1, (mp_bitcnt_t)k, 2, depth)) {
         sc_set_error(ctx, "SSA Taylor-shift parameter setup failed");
         return NULL;

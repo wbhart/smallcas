@@ -36,3 +36,4 @@ size_t sc_tune_pseudodiv_fast_cutoff = (size_t)-1;
 size_t sc_tune_pseudorem_fast_cutoff = (size_t)-1;
 size_t sc_tune_gcd_subresultant_cutoff = 5;
 size_t sc_tune_resultant_subresultant_cutoff = 8;
+size_t sc_tune_taylor_conv_cutoff = 3072;

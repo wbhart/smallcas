@@ -786,8 +786,11 @@ sc_value *sc_zz_poly_taylor_shift(sc_context *ctx, const sc_value *a,
 {
     if (a == NULL || b == NULL)
         return NULL;
-    if (a->data.zz_poly.length < SC_TAYLOR_DC_CUTOFF ||
-        mpz_cmpabs_ui(b->data.z, 1) <= 0)
+    if (mpz_cmpabs_ui(b->data.z, 1) <= 0)
+        return sc_zz_poly_taylor_shift_horner_impl(ctx, a, b);
+    if (sc_zz_poly_taylor_shift_convolution_preferred(a, b))
+        return sc_zz_poly_taylor_shift_convolution_impl(ctx, a, b);
+    if (a->data.zz_poly.length < SC_TAYLOR_DC_CUTOFF)
         return sc_zz_poly_taylor_shift_horner_impl(ctx, a, b);
     return sc_zz_poly_taylor_shift_divconquer_impl(ctx, a, b);
 }
