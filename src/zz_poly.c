@@ -1,5 +1,6 @@
 #include "smallcas.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 #define SC_MPZ_ADDEQ(x, y) mpz_add((x), (x), (y))
@@ -1672,6 +1673,74 @@ sc_value *sc_zz_poly_gcd_subresultant_impl(sc_context *ctx, const sc_value *a,
     r = g ? sc_zz_poly_scalar_mul_impl(ctx, g, c) : NULL;
     sc_value_free_many(6, ca, cb, c, u, v, g);
     return r;
+}
+
+sc_value *sc_zz_poly_resultant_bareiss_impl(sc_context *ctx, const sc_value *a,
+                                             const sc_value *b)
+{
+    size_t m, n, d, i, j, k, p;
+    int sign = 1;
+    mpz_t *mat = NULL;
+    sc_value *res = sc_value_new_zz_checked(ctx);
+    mpz_t prev, t, u;
+
+    if (res == NULL || SC_ZN(a) == 0 || SC_ZN(b) == 0)
+        return res;
+    m = SC_ZN(a) - 1;
+    n = SC_ZN(b) - 1;
+    d = m + n;
+    if (d == 0) {
+        mpz_set_ui(res->data.z, 1);
+        return res;
+    }
+    mat = malloc(d * d * sizeof(mpz_t));
+    if (mat == NULL) {
+        sc_set_error(ctx, "out of memory computing Sylvester determinant");
+        sc_value_free(res);
+        return NULL;
+    }
+    for (i = 0; i < d * d; i++)
+        mpz_init(mat[i]);
+    for (i = 0; i < n; i++)
+        for (j = 0; j <= m; j++)
+            mpz_set(mat[i * d + i + j], SC_ZP(a, m - j));
+    for (i = 0; i < m; i++)
+        for (j = 0; j <= n; j++)
+            mpz_set(mat[(n + i) * d + i + j], SC_ZP(b, n - j));
+    mpz_inits(prev, t, u, NULL);
+    mpz_set_ui(prev, 1);
+    for (k = 0; k + 1 < d; k++) {
+        for (p = k; p < d && mpz_sgn(mat[p * d + k]) == 0; p++)
+            ;
+        if (p == d) {
+            mpz_set_ui(res->data.z, 0);
+            goto done;
+        }
+        if (p != k) {
+            for (j = k; j < d; j++)
+                mpz_swap(mat[k * d + j], mat[p * d + j]);
+            sign = -sign;
+        }
+        for (i = k + 1; i < d; i++)
+            for (j = k + 1; j < d; j++) {
+                mpz_mul(t, mat[i * d + j], mat[k * d + k]);
+                mpz_mul(u, mat[i * d + k], mat[k * d + j]);
+                mpz_sub(t, t, u);
+                if (k != 0)
+                    mpz_divexact(t, t, prev);
+                mpz_set(mat[i * d + j], t);
+            }
+        mpz_set(prev, mat[k * d + k]);
+    }
+    mpz_set(res->data.z, mat[(d - 1) * d + d - 1]);
+    if (sign < 0)
+        mpz_neg(res->data.z, res->data.z);
+done:
+    mpz_clears(prev, t, u, NULL);
+    for (i = 0; i < d * d; i++)
+        mpz_clear(mat[i]);
+    free(mat);
+    return res;
 }
 
 sc_value *sc_zz_poly_resultant_subresultant_impl(sc_context *ctx,

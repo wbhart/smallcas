@@ -410,6 +410,9 @@ sc_value *sc_zz_poly_subres_prs_last(sc_context *ctx, const sc_value *a,
                                            const sc_value *b);
 sc_value *sc_zz_poly_gcd_subresultant_impl(sc_context *ctx, const sc_value *a,
                                            const sc_value *b);
+sc_value *sc_zz_poly_resultant_bareiss_impl(sc_context *ctx,
+                                             const sc_value *a,
+                                             const sc_value *b);
 sc_value *sc_zz_poly_resultant_subresultant_impl(sc_context *ctx,
                                                   const sc_value *a,
                                                   const sc_value *b);

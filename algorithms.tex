@@ -7434,9 +7434,15 @@ resultant by $(-1)^{mn}$.  Step 6 does exactly this.  Finally step 7 restores
 the two contents by \eqref{eq:resultant-content-law}.
 \end{proof}
 
-The companion implementation uses this algorithm directly.  Its shared Brown
-PRS routine returns the pair $(S,h)$ from step 5; the resultant routine tests
-the degree of $S$ but returns $h$, not the constant coefficient of $S$.
+The companion implementation uses this algorithm above a tuned small-size base
+case.  For small Sylvester order $m+n$ it evaluates
+\eqref{eq:resultant-sylvester} by fraction-free Bareiss elimination; above the
+tuned crossover it uses Algorithm~\ref{alg:subresultant-resultant}.  This
+changes only the small-degree constant factors: Bareiss uses $O(N^3)$ integer
+arithmetic operations whereas the Brown PRS has the quadratic coefficient
+arithmetic bound below.  The shared Brown PRS routine returns the pair $(S,h)$
+from step 5; the resultant routine tests the degree of $S$ but returns $h$, not
+the constant coefficient of $S$.
 
 \subsection{Coefficient growth and complexity}
 

@@ -393,11 +393,15 @@ static int test_resultant_random(sc_context *ctx, sc_parent *r)
         size_t m = 1 + rand() % 4, n = 1 + rand() % 4;
         sc_value *f = random_poly(ctx, r, m + 1), *g = random_poly(ctx, r, n + 1);
         sc_value *res = sc_zz_poly_resultant(ctx, f, g);
+        sc_value *bare = sc_zz_poly_resultant_bareiss_impl(ctx, f, g);
+        sc_value *sub = sc_zz_poly_resultant_subresultant_impl(ctx, f, g);
         int ok;
 
         resultant_reference(ref, f, g);
-        ok = res != NULL && mpz_cmp(res->data.z, ref) == 0;
-        sc_value_free_many(3, f, g, res);
+        ok = res != NULL && bare != NULL && sub != NULL &&
+             mpz_cmp(res->data.z, ref) == 0 && mpz_cmp(bare->data.z, ref) == 0 &&
+             mpz_cmp(sub->data.z, ref) == 0;
+        sc_value_free_many(5, f, g, res, bare, sub);
         if (!ok) {
             mpz_clear(ref);
             return 0;

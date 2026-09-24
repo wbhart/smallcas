@@ -36,6 +36,7 @@ extern size_t sc_tune_divexact_bidir_cutoff;
 extern size_t sc_tune_pseudodiv_fast_cutoff;
 extern size_t sc_tune_pseudorem_fast_cutoff;
 extern size_t sc_tune_gcd_subresultant_cutoff;
+extern size_t sc_tune_resultant_subresultant_cutoff;
 #define SC_MUL_KS_CUTOFF sc_tune_mul_ks_cutoff
 #define SC_MUL_TOOM3_CUTOFF sc_tune_mul_toom3_cutoff
 #define SC_MUL_KARATSUBA_CUTOFF sc_tune_mul_karatsuba_cutoff
@@ -68,6 +69,7 @@ extern size_t sc_tune_gcd_subresultant_cutoff;
 #define SC_PSEUDODIV_FAST_CUTOFF sc_tune_pseudodiv_fast_cutoff
 #define SC_PSEUDOREM_FAST_CUTOFF sc_tune_pseudorem_fast_cutoff
 #define SC_GCD_SUBRESULTANT_CUTOFF sc_tune_gcd_subresultant_cutoff
+#define SC_RESULTANT_SUBRESULTANT_CUTOFF sc_tune_resultant_subresultant_cutoff
 #else
 #ifndef SC_MUL_KS_CUTOFF
 #define SC_MUL_KS_CUTOFF ((size_t)11)
@@ -173,6 +175,9 @@ extern size_t sc_tune_gcd_subresultant_cutoff;
 #endif
 #ifndef SC_GCD_SUBRESULTANT_CUTOFF
 #define SC_GCD_SUBRESULTANT_CUTOFF ((size_t)5)
+#endif
+#ifndef SC_RESULTANT_SUBRESULTANT_CUTOFF
+#define SC_RESULTANT_SUBRESULTANT_CUTOFF ((size_t)8)
 #endif
 #ifndef SC_HGCD_BASE_CUTOFF
 #define SC_HGCD_BASE_CUTOFF ((size_t)12)

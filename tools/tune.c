@@ -30,6 +30,10 @@ typedef struct {
     tune_result subresultant;
 } gcd_tuning;
 
+typedef struct {
+    tune_result subresultant;
+} resultant_tuning;
+
 /* Division crossovers are deliberately bounded: some may never occur in a
    useful range for ZZ[x], and tuning must terminate even in that case. */
 #define DIV_TUNE_MAX_POINTS 20u
@@ -391,7 +395,8 @@ static int write_tuning(const tune_result *ks, const tune_result *toom,
                         size_t high_ntt, size_t high_ssa,
                         const tune_result *midclass, const tune_result *mid63,
                         size_t mid_ntt, size_t mid_ssa,
-                        const division_tuning *div, const gcd_tuning *gcd)
+                        const division_tuning *div, const gcd_tuning *gcd,
+                        const resultant_tuning *resultant)
 {
     const char *tmp = "include/tuning.h.tmp";
     const char *dst = "include/tuning.h";
@@ -452,6 +457,7 @@ static int write_tuning(const tune_result *ks, const tune_result *toom,
     WRITE_CUTOFF("SC_PSEUDODIV_FAST_CUTOFF", div->pseudodiv_fast.cut);
     WRITE_CUTOFF("SC_PSEUDOREM_FAST_CUTOFF", div->pseudorem_fast.cut);
     WRITE_CUTOFF("SC_GCD_SUBRESULTANT_CUTOFF", gcd->subresultant.cut);
+    WRITE_CUTOFF("SC_RESULTANT_SUBRESULTANT_CUTOFF", resultant->subresultant.cut);
 #undef WRITE_CUTOFF
     fputs("#endif\n\n#include \"tuning_defaults.h\"\n\n#endif\n", f);
     bad = ferror(f);
@@ -1224,6 +1230,72 @@ static gcd_tuning tune_gcd(sc_context *ctx, sc_parent *r, gmp_randstate_t state)
 }
 
 
+
+static resultant_tuning tune_resultant(sc_context *ctx, sc_parent *r,
+                                        gmp_randstate_t state)
+{
+    resultant_tuning rt = { 0 };
+    tune_result *tr = &rt.subresultant;
+    const size_t lo = 2, hi = 32, fallback = sc_tune_resultant_subresultant_cutoff;
+    size_t streak = 0, first_win = 0, points = 0;
+
+    tr->cut = fallback;
+    puts("\nResultant tuning: Sylvester/Bareiss -> Brown subresultant PRS.");
+    printf("  cutoff metric is Sylvester order deg(A)+deg(B); bounded search <= %zu\n", hi);
+    for (size_t d = lo; d <= hi && points < DIV_TUNE_MAX_POINTS; points++) {
+        size_t da = d / 2, db = d - da;
+        sc_value *a = random_poly(ctx, r, da + 1, 32, state);
+        sc_value *b = random_poly(ctx, r, db + 1, 32, state);
+        double mad = 0.0, q;
+
+        if (a == NULL || b == NULL) {
+            fprintf(stderr, "out of memory while tuning resultant\n");
+            exit(1);
+        }
+        q = ratio_bounded(ctx, sc_zz_poly_resultant_bareiss_impl,
+                          sc_zz_poly_resultant_subresultant_impl, a, b, &mad);
+        printf("  order=%-4zu subres/bareiss=%7.4f  MAD=%5.2f%%\n",
+               d, q, 100.0 * mad);
+        sc_value_free_many(2, a, b);
+        if (q >= 1.05) {
+            tr->loss = d;
+            tr->loss_ratio = q;
+            streak = 0;
+        } else if (q <= 0.95) {
+            if (tr->loss == 0) {
+                tr->win = d;
+                tr->win_ratio = q;
+                tr->cut = d;
+                break;
+            }
+            if (streak++ == 0)
+                first_win = d;
+            if (streak >= 2) {
+                tr->win = first_win;
+                tr->win_ratio = q;
+                tr->cut = tr->loss + (first_win - tr->loss + 1) / 2;
+                break;
+            }
+        } else
+            streak = 0;
+        if (d == hi)
+            break;
+        d = next_size(d) > hi ? hi : next_size(d);
+    }
+    if (tr->win == 0) {
+        tr->cut = hi + 1;
+        printf("  no sustained Brown win through order %zu; "
+               "using bounded Bareiss base through %zu\n", hi, hi);
+    } else if (tr->loss == 0) {
+        printf("  Brown already >5%% faster; cutoff order %zu\n", tr->cut);
+    } else {
+        printf("  5%% bracket [%zu, %zu], midpoint order %zu\n",
+               tr->loss, tr->win, tr->cut);
+    }
+    sc_tune_resultant_subresultant_cutoff = tr->cut;
+    return rt;
+}
+
 static size_t ntt_cutoff_full(sc_context *ctx, sc_parent *r, gmp_randstate_t state,
                               const tune_result *tr)
 {
@@ -1268,6 +1340,7 @@ int main(void)
     tune_result midclass, mid63, mid_ntt_r, mid_ssa_r;
     division_tuning div;
     gcd_tuning gcd;
+    resultant_tuning resultant;
     size_t ntt_cut, toom_fallback, low_ntt_cut, low_ssa_cut;
     size_t high_ntt_cut, high_ssa_cut, mid_ntt_cut, mid_ssa_cut, mid63_lo;
     unsigned mfa_cut;
@@ -1370,10 +1443,12 @@ int main(void)
 
     div = tune_division(&ctx, &r, state);
     gcd = tune_gcd(&ctx, &r, state);
+    resultant = tune_resultant(&ctx, &r, state);
 
     if (!write_tuning(&ks, &toom, &kar, &low, &ntt, ntt_cut, &ssa, mfa_cut,
                       &lowdc, low_ntt_cut, low_ssa_cut, high_ntt_cut, high_ssa_cut,
-                      &midclass, &mid63, mid_ntt_cut, mid_ssa_cut, &div, &gcd)) {
+                      &midclass, &mid63, mid_ntt_cut, mid_ssa_cut, &div, &gcd,
+                      &resultant)) {
         gmp_randclear(state);
         sc_context_clear(&ctx);
         return 1;

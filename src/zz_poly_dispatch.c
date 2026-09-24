@@ -659,8 +659,15 @@ sc_value *sc_zz_poly_gcd_lr(sc_context *ctx, const sc_value *a, const sc_value *
 
 sc_value *sc_zz_poly_resultant(sc_context *ctx, const sc_value *a, const sc_value *b)
 {
+    size_t d;
+
     if (a == NULL || b == NULL)
         return NULL;
+    if (a->data.zz_poly.length == 0 || b->data.zz_poly.length == 0)
+        return sc_zz_poly_resultant_subresultant_impl(ctx, a, b);
+    d = a->data.zz_poly.length + b->data.zz_poly.length - 2;
+    if (d < SC_RESULTANT_SUBRESULTANT_CUTOFF)
+        return sc_zz_poly_resultant_bareiss_impl(ctx, a, b);
     return sc_zz_poly_resultant_subresultant_impl(ctx, a, b);
 }
 

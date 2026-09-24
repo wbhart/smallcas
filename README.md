@@ -71,8 +71,11 @@ GCD tuning additionally chooses the small-size boundary between the primitive
 pseudo-Euclidean gcd and Brown's subresultant PRS.  The search is capped at length 64; if
 Brown does not win in that range, primitive gcd is still used only through that bounded
 small-size range, so the public gcd retains the subresultant coefficient-growth guarantee
-asymptotically.  XGCD has no separate top-level crossover: its subresultant certificate
-algorithm already inherits tuned pseudo-division and polynomial multiplication.
+asymptotically.  Resultant tuning similarly chooses a bounded small Sylvester/Bareiss base
+case before Brown's PRS, using the Sylvester order `deg(A)+deg(B)` as its metric.  The Brown
+PRS itself needs no additional crossover: each pseudo-remainder already uses the tuned
+pseudo-remainder dispatcher.  XGCD has no separate top-level crossover: its subresultant
+certificate algorithm already inherits tuned pseudo-division and polynomial multiplication.
 
 Only after every tuning stage succeeds does the tuner atomically replace
 `include/tuning.h`.  Subsequent source patches therefore change `tuning_defaults.h`, not
@@ -1320,3 +1323,18 @@ and fast pseudo-division were already documented there.  The changes in this ite
 are dispatch and tuning choices.  The experimental fraction-free and quotient-boot HGCD
 paths retain their existing base cutoff and are not part of the production gcd/xgcd
 dispatch.
+
+## Iteration 58: resultant/subresultant tuning
+
+The public resultant now has a tuned small Sylvester/Bareiss base case before
+Brown's subresultant PRS.  The cutoff metric is the Sylvester order
+`deg(A) + deg(B)`, and `make tune` searches only through order 32 with the same
+bounded paired timing used for the other algebraic crossovers.  The tracked
+fallback uses Bareiss only at small order; Brown remains the asymptotic path.
+
+There is no separate subresultant-PRS arithmetic cutoff to tune: every Brown
+pseudo-remainder already goes through the pseudo-remainder dispatcher tuned in
+iteration 57, so large PRS steps automatically inherit the fast division and
+multiplication chain.  Random resultant tests now compare the public dispatcher,
+the Bareiss base case and Brown's PRS against the independent Sylvester
+reference determinant.
