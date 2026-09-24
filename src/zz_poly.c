@@ -986,16 +986,17 @@ sc_value *sc_zz_poly_quo_newton(sc_context *ctx, const sc_value *a,
     return q;
 }
 
-sc_value *sc_zz_poly_divrem_newton(sc_context *ctx, const sc_value *a,
-                                    const sc_value *b)
+static sc_value *sc_zz_poly_remainder_from_quotient(sc_context *ctx,
+                                                      const sc_value *a,
+                                                      const sc_value *b,
+                                                      const sc_value *q)
 {
-    size_t bn = b->data.zz_poly.length, i, rn = bn - 1;
-    sc_value *q = sc_zz_poly_quo_newton(ctx, a, b);
-    sc_value *p = q == NULL ? NULL : sc_zz_poly_mullow(ctx, b, q, rn);
+    size_t rn = b->data.zz_poly.length - 1, i;
+    sc_value *p = sc_zz_poly_mullow(ctx, b, q, rn);
     sc_value *r = sc_value_new_zz_poly_checked(ctx, a->parent, rn);
 
-    if (q == NULL || p == NULL || r == NULL)
-        return sc_value_free_many_null(3, q, p, r);
+    if (p == NULL || r == NULL)
+        return sc_value_free_many_null(2, p, r);
     for (i = 0; i < rn; i++) {
         if (i < a->data.zz_poly.length)
             mpz_set(SC_ZP(r, i), SC_ZP(a, i));
@@ -1004,6 +1005,17 @@ sc_value *sc_zz_poly_divrem_newton(sc_context *ctx, const sc_value *a,
     }
     sc_zz_poly_normalize(r);
     sc_value_free(p);
+    return r;
+}
+
+sc_value *sc_zz_poly_divrem_newton(sc_context *ctx, const sc_value *a,
+                                    const sc_value *b)
+{
+    sc_value *q = sc_zz_poly_quo_newton(ctx, a, b);
+    sc_value *r = q == NULL ? NULL : sc_zz_poly_remainder_from_quotient(ctx, a, b, q);
+
+    if (q == NULL || r == NULL)
+        return sc_value_free_many_null(2, q, r);
     return sc_value_new_pair_take_checked(ctx, q, r);
 }
 
@@ -1107,10 +1119,8 @@ sc_value *sc_zz_poly_divrem_classical(sc_context *ctx,
 sc_value *sc_zz_poly_divrem_dc(sc_context *ctx, const sc_value *a, const sc_value *b)
 {
     sc_value *q = sc_zz_poly_quo_dc(ctx, a, b);
-    sc_value *p = q == NULL ? NULL : sc_zz_poly_mul(ctx, b, q);
-    sc_value *r = p == NULL ? NULL : sc_zz_poly_sub(ctx, a, p);
+    sc_value *r = q == NULL ? NULL : sc_zz_poly_remainder_from_quotient(ctx, a, b, q);
 
-    sc_value_free(p);
     if (q == NULL || r == NULL)
         return sc_value_free_many_null(2, q, r);
     return sc_value_new_pair_take_checked(ctx, q, r);
@@ -1120,10 +1130,8 @@ sc_value *sc_zz_poly_divrem_mulders(sc_context *ctx,
                                      const sc_value *a, const sc_value *b)
 {
     sc_value *q = sc_zz_poly_quo_mulders(ctx, a, b);
-    sc_value *p = q == NULL ? NULL : sc_zz_poly_mul(ctx, b, q);
-    sc_value *r = p == NULL ? NULL : sc_zz_poly_sub(ctx, a, p);
+    sc_value *r = q == NULL ? NULL : sc_zz_poly_remainder_from_quotient(ctx, a, b, q);
 
-    sc_value_free(p);
     if (q == NULL || r == NULL)
         return sc_value_free_many_null(2, q, r);
     return sc_value_new_pair_take_checked(ctx, q, r);

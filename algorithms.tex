@@ -2882,46 +2882,49 @@ reversal of $Q$ touches only $O(n)$ coefficients.  The remaining work is the
 series quotient.
 \end{proof}
 
-\subsection{Recovering the remainder}
+\subsection{Recovering the remainder by a low product}
 
-Once a quotient $q$ is known, the remainder is mathematically trivial:
+Once a quotient $q$ is known, the remainder is mathematically
+$r=a-bq$.  Computing the complete product $bq$ is unnecessary.  Put
+$s=d-1$.  Correctness of the quotient equations already implies that every
+coefficient of $a-bq$ in degree at least $s$ is zero, so only the first $s$
+coefficients need to be formed:
 \begin{equation}\label{eq:remainder-recovery}
- r=a-bq.
+ r=\operatorname{low}_{s}(a)-\operatorname{low}_{s}(bq).
 \end{equation}
-The point is computational: a straightforward quotient-and-remainder routine
-forms the complete product $bq$, whereas later algorithms will show that only
-the low remainder window need be formed.
 
-\begin{algorithm}[Remainder recovery by a full product]\label{alg:remainder-full-product}
+\begin{algorithm}[Remainder recovery by a low product]\label{alg:remainder-low-product}
 Input $a,b$ and a quotient $q$ known to satisfy the high quotient equations.
 \begin{enumerate}
- \item Compute $p\leftarrow bq$ by an ordinary full-product algorithm.
- \item Return $r\leftarrow a-p$.
+ \item Put $s\leftarrow\len(b)-1$.
+ \item Compute $p\leftarrow\operatorname{low}_{s}(bq)$.
+ \item Return
+ $r\leftarrow\operatorname{low}_{s}(a)-p$.
 \end{enumerate}
 \end{algorithm}
 
-\begin{theorem}\label{thm:remainder-full-product}
+\begin{theorem}\label{thm:remainder-low-product}
 If $q$ is the quotient obtained from
 Algorithm~\ref{alg:quotient-reversal}, then
-Algorithm~\ref{alg:remainder-full-product} returns the unique remainder in
+Algorithm~\ref{alg:remainder-low-product} returns the unique remainder in
 \eqref{eq:division-identity}.  Its additional coefficient-operation cost is
-one product of lengths $d$ and $n$, plus $O(m)$ additions or subtractions.
-For balanced $d,n=\Theta(N)$ this is $O(\mathsf M(N))$.
+one low product of output length $d-1$, plus $O(d)$ additions or
+subtractions.
 \end{theorem}
 
 \begin{proof}
 The reversed series quotient solves exactly the $n$ highest coefficient
 equations of $a=bq+r$.  Hence all coefficients of $a-bq$ in degrees
-$d-1,d,\ldots,m-1$ vanish.  Therefore $r=a-bq$ has degree at most $d-2$, so it
-is the required remainder.  The complexity statement is immediate from the
-two steps of the algorithm.
+$d-1,d,\ldots,m-1$ vanish.  Thus $a-bq$ equals its truncation modulo
+$x^{d-1}$, and \eqref{eq:remainder-recovery} is the required remainder.  The
+algorithm forms exactly that truncation, proving both correctness and the
+cost statement.
 \end{proof}
 
-The full-product recovery is adequate when divisor and quotient lengths are
-comparable.  If the quotient is short compared with a long divisor, it may do
-substantially more work than quotient computation itself.  A later section on
-Newton division will replace it by a low truncated product of exactly the
-remainder length.
+This formulation is useful even when a full product and a low product have the
+same asymptotic complexity.  It avoids coefficients which are known to cancel
+and lets remainder recovery inherit whatever classical, divide-and-conquer or
+FFT low-product implementation is fastest at the requested length.
 
 \subsection{Complexity summary}
 
@@ -2938,12 +2941,13 @@ Ignoring coefficient growth, the main results of this section are
 \text{classical balanced series quotient} & \Theta(n^2)\\
 \text{D\&C series quotient} & \Theta(n^\alpha)\\
 \text{ordinary quotient by reversal} & \Theta(n^\alpha)\\
-\text{quotient and remainder by full recovery} &
- \Theta(n^\alpha)+O(\mathsf M(d,n)).
+\text{quotient and remainder by low recovery} &
+ \Theta(n^\alpha)+O(\mathsf L_{d,n}(d-1)).
 \end{array}
 \]
-Here $\mathsf M(d,n)$ denotes the cost of multiplying lengths $d$ and $n$; in
-the balanced case it is simply $\mathsf M(n)$ up to constant rescaling.  With
+Here $\mathsf L_{d,n}(d-1)$ denotes the cost of the first $d-1$
+coefficients of a product of lengths $d$ and $n$; in the balanced case the
+short-product implementations used here make this $O(\mathsf M(n))$.  With
 the middle-product algorithms already established,
 \[
  \alpha=2,\qquad \log_2 3,\qquad \log_3 5
@@ -4205,8 +4209,9 @@ tail reversal.
 
 \subsection{Newton quotient and remainder recovery}
 
-Once the ordinary quotient $Q$ is known, a full product $BQ$ is unnecessary if
-the remainder alone is required.  If $d=\len(B)$, then
+Newton division uses the same low-product remainder recovery as
+Algorithm~\ref{alg:remainder-low-product}.  Once the ordinary quotient $Q$ is
+known, a full product $BQ$ is unnecessary if the remainder alone is required.  If $d=\len(B)$, then
 \[
  R=A-BQ,
  \qquad \deg R<d-1.
@@ -4952,6 +4957,56 @@ multiplication.  Both algorithms produce the same canonical pseudo-quotient
 and pseudo-remainder and hence share the same worst-case output coefficient
 growth.
 
+\subsection{FFT inheritance and tuned dispatch}
+
+No separate ``FFT division'' kernel is required for the division algorithms
+above.  Their expensive polynomial operations are precisely the multiplication
+primitives developed earlier in this chapter.  Consequently they inherit the
+FFT range as follows.
+
+The divide-and-conquer series quotient uses balanced middle products, and
+ordinary divide-and-conquer quotient is obtained from it by reversal.  Mulders
+short division uses recursive quotient-and-remainder calls together with a
+middle product.  Bidirectional exact division computes the two quotient ends
+by series division and verifies the unused equations with one middle-product
+window.  Once an ordinary quotient is known, quotient-and-remainder division
+uses Algorithm~\ref{alg:remainder-low-product}, so only a low product is needed
+to recover the remainder.  Thus all of these paths automatically use the tuned
+Toom, NTT or Sch\"onhage--Strassen implementation selected by the middle- or
+low-product dispatcher.
+
+Newton/Karp--Markstein division also consists of low and middle products, so
+its coefficient-operation complexity likewise inherits fast multiplication.
+Over $\ZZ[x]$, however, its reciprocal coefficients can be much taller than
+the input divisor coefficients; Lemma~\ref{lem:inverse-coefficient-growth}
+shows that this is an intrinsic possibility.  A degree at which Newton wins in
+a field or for fixed-height arithmetic therefore need not be a good automatic
+cutoff for dense small-height integer polynomials.  The implementation keeps
+Newton available explicitly but enables its automatic quotient or remainder
+path only when local timing finds a sustained improvement.
+
+Fast pseudo-division similarly inherits low multiplication through the scaled
+reciprocal and the two low products in
+Theorem~\ref{thm:pseudodiv-fast-complexity}.  Its precision
+$p=2^{\lceil\log_2 d\rceil}$ can cause visible power-of-two phases, so a single
+fast measurement is not sufficient evidence for a crossover.
+
+For these reasons the companion tuning program treats division cutoffs as
+machine-local.  It times the recursive series-division base, ordinary
+classical versus divide-and-conquer quotient and remainder, the internal and
+public Mulders paths, the bidirectional exact-division path, the
+Karp--Markstein/Newton path, and fast pseudo-division.  A division crossover is
+accepted only after first observing a sampled size at which the candidate is
+at least five percent slower, followed later by two consecutive sampled sizes
+at least five percent faster.  This avoids treating a small early winning
+pocket as the long-range crossover.  Every division search has both a maximum
+degree and a hard cap on the number of sampled sizes; timing at one sampled
+size also has a fixed sampling budget.  Thus failure to find a crossover is a
+normal bounded outcome rather than a reason to enlarge the search indefinitely.
+If no such Newton or fast pseudo-division crossover is found in the search
+range, that optional dispatcher is left disabled.  This is a tuning policy
+rather than a mathematical requirement; the algorithms remain available
+through their explicit interfaces.
 
 
 \section{Subresultant normalization of polynomial remainder sequences}

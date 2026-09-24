@@ -167,6 +167,29 @@ static int test_random_pseudodiv(sc_context *ctx, sc_parent *r)
     return 1;
 }
 
+static int test_fast_pseudodiv(sc_context *ctx, sc_parent *r)
+{
+    static const size_t nvals[] = { 17, 33, 65 };
+    size_t j;
+
+    srand(60493);
+    for (j = 0; j < sizeof(nvals) / sizeof(nvals[0]); j++) {
+        size_t n = nvals[j];
+        sc_value *a = random_poly(ctx, r, 2 * n - 1);
+        sc_value *b = random_poly(ctx, r, n);
+        sc_value *qc = sc_zz_poly_pseudodiv_impl(ctx, a, b);
+        sc_value *qf = sc_zz_poly_pseudodiv_fast(ctx, a, b);
+        int ok = qc != NULL && qf != NULL &&
+                 same_poly(qc->data.pair.first, qf->data.pair.first) &&
+                 same_poly(qc->data.pair.second, qf->data.pair.second);
+
+        sc_value_free_many(4, a, b, qc, qf);
+        if (!ok)
+            return 0;
+    }
+    return 1;
+}
+
 static int test_dc_division(sc_context *ctx, sc_parent *r)
 {
     size_t trial;
@@ -477,7 +500,8 @@ int main(void)
     if (!test_nonmonic_exact(&ctx, &r) || !test_remainder(&ctx, &r) ||
         !test_nondivisible_lead(&ctx, &r) || !test_pseudodiv(&ctx, &r) ||
         !test_short_pseudodiv(&ctx, &r) || !test_random_divrem(&ctx, &r) ||
-        !test_random_pseudodiv(&ctx, &r) || !test_dc_division(&ctx, &r) ||
+        !test_random_pseudodiv(&ctx, &r) || !test_fast_pseudodiv(&ctx, &r) ||
+        !test_dc_division(&ctx, &r) ||
         !test_dc_exact(&ctx, &r) || !test_dc_short_quotient_long_divisor(&ctx, &r) ||
         !test_dc_nondivisible(&ctx, &r) ||
         !test_bidirectional_exact(&ctx, &r) || !test_bidirectional_shifted(&ctx, &r) ||

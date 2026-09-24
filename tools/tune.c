@@ -18,6 +18,19 @@ typedef struct {
     double loss_ratio, win_ratio;
 } tune_result;
 
+typedef struct {
+    tune_result series_dc, inverse_newton, series_newton;
+    tune_result bidir_base, mulders_base;
+    tune_result quo_dc, quo_mulders, quo_newton;
+    tune_result divrem_dc, divrem_mulders, divrem_newton;
+    tune_result divexact_bidir, pseudodiv_fast;
+} division_tuning;
+
+/* Division crossovers are deliberately bounded: some may never occur in a
+   useful range for ZZ[x], and tuning must terminate even in that case. */
+#define DIV_TUNE_MAX_POINTS 20u
+#define DIV_TUNE_POINT_BUDGET 1.5
+
 static double now(void)
 {
     struct timespec t;
@@ -97,7 +110,7 @@ static double run(sc_context *ctx, mul_fn fn, const sc_value *a, const sc_value 
         sc_value *r = fn(ctx, a, b);
 
         if (r == NULL) {
-            fprintf(stderr, "tuning multiplication failed: %s\n", ctx->error);
+            fprintf(stderr, "tuned operation failed: %s\n", ctx->error);
             exit(1);
         }
         sc_value_free(r);
@@ -113,7 +126,7 @@ static void timed_one(sc_context *ctx, mul_fn fn, const sc_value *a,
 
     *sum += now() - t;
     if (r == NULL) {
-        fprintf(stderr, "tuning multiplication failed: %s\n", ctx->error);
+        fprintf(stderr, "tuned operation failed: %s\n", ctx->error);
         exit(1);
     }
     sc_value_free(r);
@@ -162,6 +175,43 @@ static double ratio(sc_context *ctx, mul_fn old, mul_fn new, const sc_value *a,
                 d[i] = fabs(v[i] - med);
             *relmad = median(d, ns + 1) / med;
             if (*relmad <= 0.01)
+                return med;
+        }
+    }
+    med = median(v, ns);
+    for (size_t i = 0; i < ns; i++)
+        d[i] = fabs(v[i] - med);
+    *relmad = median(d, ns) / med;
+    return med;
+}
+
+static double ratio_bounded(sc_context *ctx, mul_fn old, mul_fn new,
+                            const sc_value *a, const sc_value *b,
+                            double *relmad)
+{
+    double v[15], d[15], ta, tb, med, start;
+    size_t reps = 1, ns = 0;
+
+    while (reps < 4096) {
+        ta = run(ctx, old, a, b, reps);
+        tb = run(ctx, new, a, b, reps);
+        if (ta + tb >= 0.010 || ta + tb >= DIV_TUNE_POINT_BUDGET / 4.0)
+            break;
+        reps <<= 1;
+    }
+    start = now();
+    for (ns = 0; ns < 15; ns++) {
+        v[ns] = pair_sample(ctx, old, new, a, b, reps, (int)(ns & 1));
+        if (ns >= 4) {
+            double q[15];
+
+            for (size_t i = 0; i <= ns; i++)
+                q[i] = v[i];
+            med = median(q, ns + 1);
+            for (size_t i = 0; i <= ns; i++)
+                d[i] = fabs(v[i] - med);
+            *relmad = median(d, ns + 1) / med;
+            if (*relmad <= 0.01 || now() - start >= DIV_TUNE_POINT_BUDGET)
                 return med;
         }
     }
@@ -336,7 +386,8 @@ static int write_tuning(const tune_result *ks, const tune_result *toom,
                         const tune_result *lowdc, size_t low_ntt, size_t low_ssa,
                         size_t high_ntt, size_t high_ssa,
                         const tune_result *midclass, const tune_result *mid63,
-                        size_t mid_ntt, size_t mid_ssa)
+                        size_t mid_ntt, size_t mid_ssa,
+                        const division_tuning *div)
 {
     const char *tmp = "include/tuning.h.tmp";
     const char *dst = "include/tuning.h";
@@ -368,21 +419,34 @@ static int write_tuning(const tune_result *ks, const tune_result *toom,
     else
         fprintf(f, "#define SC_SSA_MFA_CUTOFF_LOG ((unsigned)%u)\n", mfa_cut);
     fprintf(f, "#define SC_MULLOW_DC_CUTOFF ((size_t)%zu)\n", lowdc->cut);
-#define WRITE_SHORT_CUTOFF(name, value) do { \
+#define WRITE_CUTOFF(name, value) do { \
         if ((value) == (size_t)-1) \
             fprintf(f, "#define %s ((size_t)-1)\n", (name)); \
         else \
             fprintf(f, "#define %s ((size_t)%zu)\n", (name), (value)); \
     } while (0)
-    WRITE_SHORT_CUTOFF("SC_MULLOW_NTT_CUTOFF", low_ntt);
-    WRITE_SHORT_CUTOFF("SC_MULLOW_SSA_CUTOFF", low_ssa);
-    WRITE_SHORT_CUTOFF("SC_MULHIGH_NTT_CUTOFF", high_ntt);
-    WRITE_SHORT_CUTOFF("SC_MULHIGH_SSA_CUTOFF", high_ssa);
+    WRITE_CUTOFF("SC_MULLOW_NTT_CUTOFF", low_ntt);
+    WRITE_CUTOFF("SC_MULLOW_SSA_CUTOFF", low_ssa);
+    WRITE_CUTOFF("SC_MULHIGH_NTT_CUTOFF", high_ntt);
+    WRITE_CUTOFF("SC_MULHIGH_SSA_CUTOFF", high_ssa);
     fprintf(f, "#define SC_MULMID_CLASSICAL_CUTOFF ((size_t)%zu)\n", midclass->cut);
     fprintf(f, "#define SC_MULMID_TOOM63_CUTOFF ((size_t)%zu)\n", mid63->cut);
-    WRITE_SHORT_CUTOFF("SC_MULMID_NTT_CUTOFF", mid_ntt);
-    WRITE_SHORT_CUTOFF("SC_MULMID_SSA_CUTOFF", mid_ssa);
-#undef WRITE_SHORT_CUTOFF
+    WRITE_CUTOFF("SC_MULMID_NTT_CUTOFF", mid_ntt);
+    WRITE_CUTOFF("SC_MULMID_SSA_CUTOFF", mid_ssa);
+    WRITE_CUTOFF("SC_SERIES_QUO_DC_CUTOFF", div->series_dc.cut);
+    WRITE_CUTOFF("SC_INV_SERIES_NEWTON_CUTOFF", div->inverse_newton.cut);
+    WRITE_CUTOFF("SC_SERIES_QUO_NEWTON_CUTOFF", div->series_newton.cut);
+    WRITE_CUTOFF("SC_BIDIR_QUO_CUTOFF", div->bidir_base.cut);
+    WRITE_CUTOFF("SC_MULDERS_QUO_CUTOFF", div->mulders_base.cut);
+    WRITE_CUTOFF("SC_QUO_MULDERS_CUTOFF", div->quo_mulders.cut);
+    WRITE_CUTOFF("SC_DIVREM_MULDERS_CUTOFF", div->divrem_mulders.cut);
+    WRITE_CUTOFF("SC_DIVREM_DC_CUTOFF", div->divrem_dc.cut);
+    WRITE_CUTOFF("SC_QUO_NEWTON_CUTOFF", div->quo_newton.cut);
+    WRITE_CUTOFF("SC_DIVREM_NEWTON_CUTOFF", div->divrem_newton.cut);
+    WRITE_CUTOFF("SC_QUO_DC_CUTOFF", div->quo_dc.cut);
+    WRITE_CUTOFF("SC_DIVEXACT_BIDIR_CUTOFF", div->divexact_bidir.cut);
+    WRITE_CUTOFF("SC_PSEUDODIV_FAST_CUTOFF", div->pseudodiv_fast.cut);
+#undef WRITE_CUTOFF
     fputs("#endif\n\n#include \"tuning_defaults.h\"\n\n#endif\n", f);
     bad = ferror(f);
     if (fclose(f) != 0)
@@ -620,6 +684,43 @@ static double short_ratio(sc_context *ctx, short_fn old, short_fn new,
     return med;
 }
 
+static double short_ratio_bounded(sc_context *ctx, short_fn old, short_fn new,
+                                  const sc_value *a, const sc_value *b, size_t n,
+                                  double *relmad)
+{
+    double v[15], d[15], ta, tb, med, start;
+    size_t reps = 1, ns = 0;
+
+    while (reps < 4096) {
+        ta = short_run(ctx, old, a, b, n, reps);
+        tb = short_run(ctx, new, a, b, n, reps);
+        if (ta + tb >= 0.010 || ta + tb >= DIV_TUNE_POINT_BUDGET / 4.0)
+            break;
+        reps <<= 1;
+    }
+    start = now();
+    for (ns = 0; ns < 15; ns++) {
+        v[ns] = short_pair_sample(ctx, old, new, a, b, n, reps, (int)(ns & 1));
+        if (ns >= 4) {
+            double q[15];
+
+            for (size_t i = 0; i <= ns; i++)
+                q[i] = v[i];
+            med = median(q, ns + 1);
+            for (size_t i = 0; i <= ns; i++)
+                d[i] = fabs(v[i] - med);
+            *relmad = median(d, ns + 1) / med;
+            if (*relmad <= 0.01 || now() - start >= DIV_TUNE_POINT_BUDGET)
+                return med;
+        }
+    }
+    med = median(v, ns);
+    for (size_t i = 0; i < ns; i++)
+        d[i] = fabs(v[i] - med);
+    *relmad = median(d, ns) / med;
+    return med;
+}
+
 static tune_result tune_short_pair(sc_context *ctx, sc_parent *r,
                                    gmp_randstate_t state, const char *name,
                                    short_fn old, short_fn new, size_t bits,
@@ -671,6 +772,379 @@ static tune_result tune_short_pair(sc_context *ctx, sc_parent *r,
     return tr;
 }
 
+static int make_division_case(sc_context *ctx, sc_parent *r,
+                              gmp_randstate_t state, size_t n, size_t bits,
+                              int balanced, int unit_lead, int exact,
+                              sc_value **ap, sc_value **bp)
+{
+    size_t bn = balanced ? n : (n + 1) / 2, rn = exact || bn < 2 ? 0 : bn - 1;
+    sc_value *b = random_poly(ctx, r, bn, bits, state);
+    sc_value *q = random_poly(ctx, r, n, bits, state);
+    sc_value *rem = rn ? random_poly(ctx, r, rn, bits, state) : NULL;
+    sc_value *a = b && q ? sc_zz_poly_mul_classical(ctx, b, q) : NULL;
+    sc_value *sum = a && rem ? sc_zz_poly_add(ctx, a, rem) : NULL;
+
+    if (unit_lead && b != NULL)
+        mpz_set_ui(b->data.zz_poly.coeff[bn - 1], 1);
+    if (unit_lead) {
+        sc_value_free_many(2, a, sum);
+        a = b && q ? sc_zz_poly_mul_classical(ctx, b, q) : NULL;
+        sum = a && rem ? sc_zz_poly_add(ctx, a, rem) : NULL;
+    }
+    if (rem != NULL) {
+        sc_value_free(a);
+        a = sum;
+        sum = NULL;
+    }
+    sc_value_free_many(3, q, rem, sum);
+    if (a == NULL || b == NULL) {
+        sc_value_free_many(2, a, b);
+        return 0;
+    }
+    *ap = a;
+    *bp = b;
+    return 1;
+}
+
+static int make_pseudodiv_case(sc_context *ctx, sc_parent *r,
+                               gmp_randstate_t state, size_t n, size_t bits,
+                               sc_value **ap, sc_value **bp)
+{
+    *ap = random_poly(ctx, r, 2 * n - 1, bits, state);
+    *bp = random_poly(ctx, r, n, bits, state);
+    if (*ap != NULL && *bp != NULL)
+        return 1;
+    sc_value_free_many(2, *ap, *bp);
+    return 0;
+}
+
+static int make_series_case(sc_context *ctx, sc_parent *r,
+                            gmp_randstate_t state, size_t n, size_t bits,
+                            int unit, sc_value **ap, sc_value **bp)
+{
+    sc_value *b = random_poly(ctx, r, n, bits, state);
+    sc_value *q = random_poly(ctx, r, n, bits, state), *a;
+
+    if (b == NULL || q == NULL)
+        return sc_value_free_many_null(2, b, q), 0;
+    if (unit)
+        mpz_set_ui(b->data.zz_poly.coeff[0], 1);
+    else
+        mpz_set_ui(b->data.zz_poly.coeff[0], 3);
+    a = sc_zz_poly_mullow_classical(ctx, b, q, n);
+    sc_value_free(q);
+    if (a == NULL)
+        return sc_value_free_many_null(1, b), 0;
+    *ap = a;
+    *bp = b;
+    return 1;
+}
+
+static tune_result tune_div_pair(sc_context *ctx, sc_parent *r,
+                                 gmp_randstate_t state, const char *name,
+                                 mul_fn old, mul_fn new, size_t bits,
+                                 int balanced, int unit_lead, int exact,
+                                 size_t lo, size_t hi, size_t fallback)
+{
+    tune_result tr = { 0, 0, fallback, 0.0, 0.0 };
+    size_t streak = 0, first_win = 0, points = 0;
+
+    printf("\n%s\n", name);
+    printf("  bounded search: n <= %zu, at most %u sampled sizes\n", hi, DIV_TUNE_MAX_POINTS);
+    for (size_t n = lo; n <= hi && points < DIV_TUNE_MAX_POINTS; points++) {
+        sc_value *a = NULL, *b = NULL;
+        double mad = 0.0, q;
+
+        if (!make_division_case(ctx, r, state, n, bits, balanced,
+                                unit_lead, exact, &a, &b)) {
+            fprintf(stderr, "out of memory while tuning division\n");
+            exit(1);
+        }
+        q = ratio_bounded(ctx, old, new, a, b, &mad);
+        printf("  qn=%-6zu bits=%-4zu new/old=%7.4f  MAD=%5.2f%%\n",
+               n, bits, q, 100.0 * mad);
+        sc_value_free_many(2, a, b);
+        if (q >= 1.05) {
+            tr.loss = n;
+            tr.loss_ratio = q;
+            streak = 0;
+        } else if (q <= 0.95 && tr.loss != 0) {
+            if (streak++ == 0)
+                first_win = n;
+            if (streak >= 2) {
+                tr.win = first_win;
+                tr.win_ratio = q;
+                tr.cut = tr.loss ? tr.loss + (first_win - tr.loss) / 2 : first_win;
+                break;
+            }
+        } else
+            streak = 0;
+        if (n == hi)
+            break;
+        n = next_size(n) > hi ? hi : next_size(n);
+    }
+    if (tr.win == 0 && points >= DIV_TUNE_MAX_POINTS)
+        puts("  sample-count bound reached before a sustained crossover");
+    if (tr.win == 0) {
+        if (fallback == (size_t)-1)
+            puts("  no sustained 5% win found; keeping disabled");
+        else
+            printf("  no sustained 5%% win found; keeping %zu\n", fallback);
+    }
+    else if (tr.loss == 0)
+        printf("  already >5%% faster at first point; cutoff <= %zu\n", tr.cut);
+    else
+        printf("  5%% bracket [%zu, %zu], midpoint %zu\n", tr.loss, tr.win, tr.cut);
+    return tr;
+}
+
+static tune_result tune_pseudodiv_pair(sc_context *ctx, sc_parent *r,
+                                       gmp_randstate_t state, const char *name,
+                                       size_t bits, size_t lo, size_t hi,
+                                       size_t fallback)
+{
+    tune_result tr = { 0, 0, fallback, 0.0, 0.0 };
+    size_t streak = 0, first_win = 0, points = 0;
+
+    printf("\n%s\n", name);
+    printf("  bounded search: n <= %zu, at most %u sampled sizes\n", hi, DIV_TUNE_MAX_POINTS);
+    for (size_t n = lo; n <= hi && points < DIV_TUNE_MAX_POINTS; points++) {
+        sc_value *a = NULL, *b = NULL;
+        double mad = 0.0, q;
+
+        if (!make_pseudodiv_case(ctx, r, state, n, bits, &a, &b)) {
+            fprintf(stderr, "out of memory while tuning pseudo-division\n");
+            exit(1);
+        }
+        q = ratio_bounded(ctx, sc_zz_poly_pseudodiv_impl,
+                          sc_zz_poly_pseudodiv_fast, a, b, &mad);
+        printf("  qn=%-6zu bits=%-4zu fast/classical=%7.4f  MAD=%5.2f%%\n",
+               n, bits, q, 100.0 * mad);
+        sc_value_free_many(2, a, b);
+        if (q >= 1.05)
+            tr.loss = n, tr.loss_ratio = q, streak = 0;
+        else if (q <= 0.95 && tr.loss != 0) {
+            if (streak++ == 0)
+                first_win = n;
+            if (streak >= 2) {
+                tr.win = first_win, tr.win_ratio = q;
+                tr.cut = tr.loss ? tr.loss + (first_win - tr.loss) / 2 : first_win;
+                break;
+            }
+        } else
+            streak = 0;
+        if (n == hi)
+            break;
+        n = next_size(n) > hi ? hi : next_size(n);
+    }
+    if (tr.win == 0 && points >= DIV_TUNE_MAX_POINTS)
+        puts("  sample-count bound reached before a sustained crossover");
+    if (tr.win == 0) {
+        if (fallback == (size_t)-1)
+            puts("  no sustained 5% win found; keeping disabled");
+        else
+            printf("  no sustained 5%% win found; keeping %zu\n", fallback);
+    }
+    else if (tr.loss == 0)
+        printf("  already >5%% faster at first point; cutoff <= %zu\n", tr.cut);
+    else
+        printf("  5%% bracket [%zu, %zu], midpoint %zu\n", tr.loss, tr.win, tr.cut);
+    return tr;
+}
+
+static sc_value *inv_series_classical_tune(sc_context *ctx, const sc_value *a,
+                                            const sc_value *b, size_t n)
+{
+    (void)a;
+    return sc_zz_poly_inv_series_classical(ctx, b, n);
+}
+
+static sc_value *inv_series_newton_tune(sc_context *ctx, const sc_value *a,
+                                         const sc_value *b, size_t n)
+{
+    (void)a;
+    return sc_zz_poly_inv_series_newton(ctx, b, n);
+}
+
+static tune_result tune_series_pair(sc_context *ctx, sc_parent *r,
+                                    gmp_randstate_t state, const char *name,
+                                    short_fn old, short_fn new, size_t bits,
+                                    int unit, size_t lo, size_t hi,
+                                    size_t fallback)
+{
+    tune_result tr = { 0, 0, fallback, 0.0, 0.0 };
+    size_t streak = 0, first_win = 0, points = 0;
+
+    printf("\n%s\n", name);
+    printf("  bounded search: n <= %zu, at most %u sampled sizes\n", hi, DIV_TUNE_MAX_POINTS);
+    for (size_t n = lo; n <= hi && points < DIV_TUNE_MAX_POINTS; points++) {
+        sc_value *a = NULL, *b = NULL;
+        double mad = 0.0, q;
+
+        if (!make_series_case(ctx, r, state, n, bits, unit, &a, &b)) {
+            fprintf(stderr, "out of memory while tuning series division\n");
+            exit(1);
+        }
+        q = short_ratio_bounded(ctx, old, new, a, b, n, &mad);
+        printf("  n=%-6zu bits=%-4zu new/old=%7.4f  MAD=%5.2f%%\n",
+               n, bits, q, 100.0 * mad);
+        sc_value_free_many(2, a, b);
+        if (q >= 1.05)
+            tr.loss = n, tr.loss_ratio = q, streak = 0;
+        else if (q <= 0.95 && tr.loss != 0) {
+            if (streak++ == 0)
+                first_win = n;
+            if (streak >= 2) {
+                tr.win = first_win, tr.win_ratio = q;
+                tr.cut = tr.loss ? tr.loss + (first_win - tr.loss) / 2 : first_win;
+                break;
+            }
+        } else
+            streak = 0;
+        if (n == hi)
+            break;
+        n = next_size(n) > hi ? hi : next_size(n);
+    }
+    if (tr.win == 0 && points >= DIV_TUNE_MAX_POINTS)
+        puts("  sample-count bound reached before a sustained crossover");
+    if (tr.win == 0) {
+        if (fallback == (size_t)-1)
+            puts("  no sustained 5% win found; keeping disabled");
+        else
+            printf("  no sustained 5%% win found; keeping %zu\n", fallback);
+    }
+    else if (tr.loss == 0)
+        printf("  already >5%% faster at first point; cutoff <= %zu\n", tr.cut);
+    else
+        printf("  5%% bracket [%zu, %zu], midpoint %zu\n", tr.loss, tr.win, tr.cut);
+    return tr;
+}
+
+static sc_value *divexact_bidir_tune(sc_context *ctx, const sc_value *a,
+                                     const sc_value *b)
+{
+    size_t an = a->data.zz_poly.length, bn = b->data.zz_poly.length;
+    size_t qn = an - bn + 1, ln = (qn + 1) / 2, midn = bn - 1;
+    sc_value *q = sc_zz_poly_quo_bidirectional(ctx, a, b);
+    sc_value *mid = q ? sc_zz_poly_mulmid(ctx, b, q, ln, midn) : NULL;
+
+    if (q == NULL || mid == NULL)
+        return sc_value_free_many_null(2, q, mid);
+    sc_value_free(mid);
+    return q;
+}
+
+static division_tuning tune_division(sc_context *ctx, sc_parent *r,
+                                     gmp_randstate_t state)
+{
+    division_tuning d;
+    size_t series_dc0 = sc_tune_series_quo_dc_cutoff;
+    size_t bidir0 = sc_tune_bidir_quo_cutoff;
+    size_t mulders0 = sc_tune_mulders_quo_cutoff;
+    size_t quo_dc0 = sc_tune_quo_dc_cutoff;
+    size_t divrem_dc0 = sc_tune_divrem_dc_cutoff;
+    size_t divexact0 = sc_tune_divexact_bidir_cutoff;
+    size_t lo;
+
+    memset(&d, 0, sizeof(d));
+    puts("\nDivision tuning: bounded 5% loss -> two-win crossover searches.");
+    sc_tune_series_quo_dc_cutoff = 1;
+    d.series_dc = tune_series_pair(ctx, r, state,
+        "series quotient classical -> divide-and-conquer (256-bit coefficients)",
+        sc_zz_poly_series_quo_classical, sc_zz_poly_series_quo_dc,
+        256, 0, 8, 768, series_dc0);
+    sc_tune_series_quo_dc_cutoff = d.series_dc.cut;
+
+    sc_tune_inv_series_newton_cutoff = 1;
+    d.inverse_newton = tune_series_pair(ctx, r, state,
+        "series inverse classical -> Newton (8-bit coefficients)",
+        inv_series_classical_tune, inv_series_newton_tune,
+        8, 1, 8, 512, (size_t)-1);
+    sc_tune_inv_series_newton_cutoff = d.inverse_newton.cut;
+
+    sc_tune_series_quo_newton_cutoff = 1;
+    d.series_newton = tune_series_pair(ctx, r, state,
+        "series quotient classical -> Karp-Markstein (8-bit, unit constant)",
+        sc_zz_poly_series_quo_classical, sc_zz_poly_series_quo_newton,
+        8, 1, 8, 512, (size_t)-1);
+    sc_tune_series_quo_newton_cutoff = d.series_newton.cut;
+
+    d.quo_dc = tune_div_pair(ctx, r, state,
+        "ordinary quotient classical -> divide-and-conquer (256-bit, q about 2x divisor)",
+        sc_zz_poly_quo_classical, sc_zz_poly_quo_dc,
+        256, 0, 0, 0, 8, 768, quo_dc0);
+    sc_tune_quo_dc_cutoff = d.quo_dc.cut;
+    d.divrem_dc = tune_div_pair(ctx, r, state,
+        "divrem classical -> divide-and-conquer (256-bit, q about 2x divisor)",
+        sc_zz_poly_divrem_classical, sc_zz_poly_divrem_dc,
+        256, 0, 0, 0, 8, 768, divrem_dc0);
+    sc_tune_divrem_dc_cutoff = d.divrem_dc.cut;
+
+    sc_tune_mulders_quo_cutoff = 1;
+    d.mulders_base = tune_div_pair(ctx, r, state,
+        "balanced quotient classical -> recursive Mulders (256-bit coefficients)",
+        sc_zz_poly_quo_classical, sc_zz_poly_quo_mulders,
+        256, 1, 0, 0, 8, 1024, mulders0);
+    sc_tune_mulders_quo_cutoff = d.mulders_base.cut;
+
+    sc_tune_quo_mulders_cutoff = (size_t)-1;
+    sc_tune_quo_newton_cutoff = (size_t)-1;
+    lo = d.mulders_base.cut == (size_t)-1 ? 0 : d.mulders_base.cut + 1;
+    if (lo != 0 && lo <= 1024)
+        d.quo_mulders = tune_div_pair(ctx, r, state,
+            "balanced lower quotient chain -> Mulders (256-bit coefficients)",
+            sc_zz_poly_quo, sc_zz_poly_quo_mulders,
+            256, 1, 0, 0, lo, 1024, (size_t)-1);
+    else
+        d.quo_mulders.cut = (size_t)-1;
+    sc_tune_quo_mulders_cutoff = d.quo_mulders.cut;
+
+    sc_tune_divrem_mulders_cutoff = (size_t)-1;
+    sc_tune_divrem_newton_cutoff = (size_t)-1;
+    if (lo != 0 && lo <= 1024)
+        d.divrem_mulders = tune_div_pair(ctx, r, state,
+            "balanced lower divrem chain -> Mulders (256-bit coefficients)",
+            sc_zz_poly_divrem, sc_zz_poly_divrem_mulders,
+            256, 1, 0, 0, lo, 1024, (size_t)-1);
+    else
+        d.divrem_mulders.cut = (size_t)-1;
+    sc_tune_divrem_mulders_cutoff = d.divrem_mulders.cut;
+
+    sc_tune_quo_newton_cutoff = (size_t)-1;
+    d.quo_newton = tune_div_pair(ctx, r, state,
+        "unit-leading lower quotient chain -> Newton (8-bit coefficients)",
+        sc_zz_poly_quo, sc_zz_poly_quo_newton,
+        8, 1, 1, 0, 32, 512, (size_t)-1);
+    sc_tune_quo_newton_cutoff = d.quo_newton.cut;
+
+    sc_tune_divrem_newton_cutoff = (size_t)-1;
+    d.divrem_newton = tune_div_pair(ctx, r, state,
+        "unit-leading lower divrem chain -> Newton (8-bit coefficients)",
+        sc_zz_poly_divrem, sc_zz_poly_divrem_newton,
+        8, 1, 1, 0, 32, 512, (size_t)-1);
+    sc_tune_divrem_newton_cutoff = d.divrem_newton.cut;
+
+    sc_tune_bidir_quo_cutoff = 1;
+    d.bidir_base = tune_div_pair(ctx, r, state,
+        "exact balanced quotient classical -> bidirectional core (256-bit coefficients)",
+        sc_zz_poly_quo_classical, sc_zz_poly_quo_bidirectional,
+        256, 1, 0, 1, 8, 1024, bidir0);
+    sc_tune_bidir_quo_cutoff = d.bidir_base.cut;
+
+    sc_tune_divexact_bidir_cutoff = (size_t)-1;
+    d.divexact_bidir = tune_div_pair(ctx, r, state,
+        "exact division lower chain -> bidirectional + middle check (256-bit coefficients)",
+        sc_zz_poly_divexact, divexact_bidir_tune,
+        256, 1, 0, 1, 8, 1024, divexact0);
+    sc_tune_divexact_bidir_cutoff = d.divexact_bidir.cut;
+
+    d.pseudodiv_fast = tune_pseudodiv_pair(ctx, r, state,
+        "pseudo-division classical -> scaled-Newton fast path (32-bit coefficients)",
+        32, 8, 256, (size_t)-1);
+    sc_tune_pseudodiv_fast_cutoff = d.pseudodiv_fast.cut;
+    return d;
+}
+
 static size_t ntt_cutoff_full(sc_context *ctx, sc_parent *r, gmp_randstate_t state,
                               const tune_result *tr)
 {
@@ -713,6 +1187,7 @@ int main(void)
     tune_result ks, kar, low, toom, ntt, ssa, lowdc;
     tune_result low_ntt_r, low_ssa_r, high_ntt_r, high_ssa_r;
     tune_result midclass, mid63, mid_ntt_r, mid_ssa_r;
+    division_tuning div;
     size_t ntt_cut, toom_fallback, low_ntt_cut, low_ssa_cut;
     size_t high_ntt_cut, high_ssa_cut, mid_ntt_cut, mid_ssa_cut, mid63_lo;
     unsigned mfa_cut;
@@ -813,9 +1288,11 @@ int main(void)
     mid_ssa_cut = mid_ssa_r.win ? mid_ssa_r.cut : (size_t)-1;
     sc_tune_mulmid_ssa_cutoff = mid_ssa_cut;
 
+    div = tune_division(&ctx, &r, state);
+
     if (!write_tuning(&ks, &toom, &kar, &low, &ntt, ntt_cut, &ssa, mfa_cut,
                       &lowdc, low_ntt_cut, low_ssa_cut, high_ntt_cut, high_ssa_cut,
-                      &midclass, &mid63, mid_ntt_cut, mid_ssa_cut)) {
+                      &midclass, &mid63, mid_ntt_cut, mid_ssa_cut, &div)) {
         gmp_randclear(state);
         sc_context_clear(&ctx);
         return 1;

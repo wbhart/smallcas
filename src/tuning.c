@@ -18,3 +18,17 @@ size_t sc_tune_mulmid_classical_cutoff = 33;
 size_t sc_tune_mulmid_toom63_cutoff = 39;
 size_t sc_tune_mulmid_ntt_cutoff = 651;
 size_t sc_tune_mulmid_ssa_cutoff = 86;
+
+size_t sc_tune_series_quo_dc_cutoff = 16;
+size_t sc_tune_inv_series_newton_cutoff = 16;
+size_t sc_tune_series_quo_newton_cutoff = 16;
+size_t sc_tune_bidir_quo_cutoff = 16;
+size_t sc_tune_mulders_quo_cutoff = 16;
+size_t sc_tune_quo_mulders_cutoff = (size_t)-1;
+size_t sc_tune_divrem_mulders_cutoff = (size_t)-1;
+size_t sc_tune_divrem_dc_cutoff = 32;
+size_t sc_tune_quo_newton_cutoff = 64;
+size_t sc_tune_divrem_newton_cutoff = 64;
+size_t sc_tune_quo_dc_cutoff = 32;
+size_t sc_tune_divexact_bidir_cutoff = 32;
+size_t sc_tune_pseudodiv_fast_cutoff = (size_t)-1;

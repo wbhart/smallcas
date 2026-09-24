@@ -21,6 +21,19 @@ extern size_t sc_tune_mulmid_classical_cutoff;
 extern size_t sc_tune_mulmid_toom63_cutoff;
 extern size_t sc_tune_mulmid_ntt_cutoff;
 extern size_t sc_tune_mulmid_ssa_cutoff;
+extern size_t sc_tune_series_quo_dc_cutoff;
+extern size_t sc_tune_inv_series_newton_cutoff;
+extern size_t sc_tune_series_quo_newton_cutoff;
+extern size_t sc_tune_bidir_quo_cutoff;
+extern size_t sc_tune_mulders_quo_cutoff;
+extern size_t sc_tune_quo_mulders_cutoff;
+extern size_t sc_tune_divrem_mulders_cutoff;
+extern size_t sc_tune_divrem_dc_cutoff;
+extern size_t sc_tune_quo_newton_cutoff;
+extern size_t sc_tune_divrem_newton_cutoff;
+extern size_t sc_tune_quo_dc_cutoff;
+extern size_t sc_tune_divexact_bidir_cutoff;
+extern size_t sc_tune_pseudodiv_fast_cutoff;
 #define SC_MUL_KS_CUTOFF sc_tune_mul_ks_cutoff
 #define SC_MUL_TOOM3_CUTOFF sc_tune_mul_toom3_cutoff
 #define SC_MUL_KARATSUBA_CUTOFF sc_tune_mul_karatsuba_cutoff
@@ -38,6 +51,19 @@ extern size_t sc_tune_mulmid_ssa_cutoff;
 #define SC_MULMID_TOOM63_CUTOFF sc_tune_mulmid_toom63_cutoff
 #define SC_MULMID_NTT_CUTOFF sc_tune_mulmid_ntt_cutoff
 #define SC_MULMID_SSA_CUTOFF sc_tune_mulmid_ssa_cutoff
+#define SC_SERIES_QUO_DC_CUTOFF sc_tune_series_quo_dc_cutoff
+#define SC_INV_SERIES_NEWTON_CUTOFF sc_tune_inv_series_newton_cutoff
+#define SC_SERIES_QUO_NEWTON_CUTOFF sc_tune_series_quo_newton_cutoff
+#define SC_BIDIR_QUO_CUTOFF sc_tune_bidir_quo_cutoff
+#define SC_MULDERS_QUO_CUTOFF sc_tune_mulders_quo_cutoff
+#define SC_QUO_MULDERS_CUTOFF sc_tune_quo_mulders_cutoff
+#define SC_DIVREM_MULDERS_CUTOFF sc_tune_divrem_mulders_cutoff
+#define SC_DIVREM_DC_CUTOFF sc_tune_divrem_dc_cutoff
+#define SC_QUO_NEWTON_CUTOFF sc_tune_quo_newton_cutoff
+#define SC_DIVREM_NEWTON_CUTOFF sc_tune_divrem_newton_cutoff
+#define SC_QUO_DC_CUTOFF sc_tune_quo_dc_cutoff
+#define SC_DIVEXACT_BIDIR_CUTOFF sc_tune_divexact_bidir_cutoff
+#define SC_PSEUDODIV_FAST_CUTOFF sc_tune_pseudodiv_fast_cutoff
 #else
 #ifndef SC_MUL_KS_CUTOFF
 #define SC_MUL_KS_CUTOFF ((size_t)11)
@@ -114,17 +140,29 @@ extern size_t sc_tune_mulmid_ssa_cutoff;
 #ifndef SC_MULDERS_QUO_CUTOFF
 #define SC_MULDERS_QUO_CUTOFF ((size_t)16)
 #endif
+#ifndef SC_QUO_MULDERS_CUTOFF
+#define SC_QUO_MULDERS_CUTOFF ((size_t)-1)
+#endif
+#ifndef SC_DIVREM_MULDERS_CUTOFF
+#define SC_DIVREM_MULDERS_CUTOFF ((size_t)-1)
+#endif
 #ifndef SC_DIVREM_DC_CUTOFF
 #define SC_DIVREM_DC_CUTOFF ((size_t)32)
 #endif
 #ifndef SC_QUO_NEWTON_CUTOFF
 #define SC_QUO_NEWTON_CUTOFF ((size_t)64)
 #endif
+#ifndef SC_DIVREM_NEWTON_CUTOFF
+#define SC_DIVREM_NEWTON_CUTOFF ((size_t)64)
+#endif
 #ifndef SC_QUO_DC_CUTOFF
 #define SC_QUO_DC_CUTOFF ((size_t)32)
 #endif
 #ifndef SC_DIVEXACT_BIDIR_CUTOFF
 #define SC_DIVEXACT_BIDIR_CUTOFF ((size_t)32)
+#endif
+#ifndef SC_PSEUDODIV_FAST_CUTOFF
+#define SC_PSEUDODIV_FAST_CUTOFF ((size_t)-1)
 #endif
 #ifndef SC_HGCD_BASE_CUTOFF
 #define SC_HGCD_BASE_CUTOFF ((size_t)12)

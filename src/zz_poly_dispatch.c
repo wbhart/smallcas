@@ -480,6 +480,8 @@ sc_value *sc_zz_poly_quo(sc_context *ctx, const sc_value *a, const sc_value *b)
     qn = an >= bn ? an - bn + 1 : 0;
     if (qn >= SC_QUO_NEWTON_CUTOFF && bn > 1 && sc_zz_poly_unit_lead(b))
         return sc_zz_poly_quo_newton(ctx, a, b);
+    if (qn >= SC_QUO_MULDERS_CUTOFF && qn <= bn && bn > 1)
+        return sc_zz_poly_quo_mulders(ctx, a, b);
     if (qn >= SC_QUO_DC_CUTOFF && bn > 1)
         return sc_zz_poly_quo_dc(ctx, a, b);
     return sc_zz_poly_quo_classical(ctx, a, b);
@@ -498,8 +500,10 @@ sc_value *sc_zz_poly_divrem(sc_context *ctx, const sc_value *a, const sc_value *
     }
     an = a->data.zz_poly.length;
     qn = an >= bn ? an - bn + 1 : 0;
-    if (qn >= SC_QUO_NEWTON_CUTOFF && bn > 1 && sc_zz_poly_unit_lead(b))
+    if (qn >= SC_DIVREM_NEWTON_CUTOFF && bn > 1 && sc_zz_poly_unit_lead(b))
         return sc_zz_poly_divrem_newton(ctx, a, b);
+    if (qn >= SC_DIVREM_MULDERS_CUTOFF && qn <= bn && bn > 1)
+        return sc_zz_poly_divrem_mulders(ctx, a, b);
     if (qn >= SC_DIVREM_DC_CUTOFF && bn > 1)
         return sc_zz_poly_divrem_dc(ctx, a, b);
     return sc_zz_poly_divrem_classical(ctx, a, b);
@@ -563,12 +567,19 @@ sc_value *sc_zz_poly_divexact(sc_context *ctx, const sc_value *a, const sc_value
 
 sc_value *sc_zz_poly_pseudodiv(sc_context *ctx, const sc_value *a, const sc_value *b)
 {
+    size_t an, bn, qn;
+
     if (a == NULL || b == NULL)
         return NULL;
-    if (b->data.zz_poly.length == 0) {
+    an = a->data.zz_poly.length;
+    bn = b->data.zz_poly.length;
+    if (bn == 0) {
         sc_set_error(ctx, "polynomial pseudo-division by zero");
         return NULL;
     }
+    qn = an >= bn ? an - bn + 1 : 0;
+    if (qn >= SC_PSEUDODIV_FAST_CUTOFF && bn > 1)
+        return sc_zz_poly_pseudodiv_fast(ctx, a, b);
     return sc_zz_poly_pseudodiv_impl(ctx, a, b);
 }
 

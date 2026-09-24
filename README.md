@@ -51,11 +51,20 @@ are measured as requested/shorter length per CRT prime.  MFA is timed at success
 transform depths on the minimum-size Fermat ring allowed by SSA, using a
 forward-plus-inverse round trip; if no 5% MFA win is found through depth 15 it is disabled.
 
-The tuner now covers the full-product chain, the mullo classical/DC and full-FFT
+The tuner covers the full-product chain, the mullo classical/DC and full-FFT
 crossovers, independent mulhi full-FFT crossovers, and the balanced middle-product chain
 classical -> Toom42 -> Toom63 -> FFT wraparound.  CRT-NTT and SSA have separate short
 product cutoffs.  The Toom63 search begins after the tuned classical/Toom42 boundary so
 the generated chain remains ordered.
+
+Division tuning covers the recursive series-quotient and inverse bases, ordinary
+quotient/divrem, Mulders short division, Newton/Karp--Markstein division, bidirectional
+exact division and fast pseudo-division.  These fast division algorithms inherit the
+tuned low and middle products, hence NTT/SSA, rather than needing a separate FFT division
+kernel.  Division searches are deliberately bounded in degree, number of sampled sizes
+and timing samples.  A crossover requires a measured 5% loss followed by two consecutive
+5% wins, so an isolated early pocket is ignored.  A missing crossover is a valid result;
+optional paths such as public Mulders, Newton or fast pseudo-division remain disabled.
 
 Only after every tuning stage succeeds does the tuner atomically replace
 `include/tuning.h`.  Subsequent source patches therefore change `tuning_defaults.h`, not
