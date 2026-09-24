@@ -45,16 +45,18 @@ static int test_fixed(sc_context *ctx, sc_parent *r)
 {
     const long fc[] = { -7, 5, -2, 3 }, ec[] = { 19, 33, 16, 3 };
     sc_value *f = poly_si(ctx, r, 4, fc), *e = poly_si(ctx, r, 4, ec);
-    sc_value *c = sc_zz_from_str(ctx, "2"), *h, *d, *a;
+    sc_value *c = sc_zz_from_str(ctx, "2"), *h, *d, *v, *a;
     int ok;
 
     if (f == NULL || e == NULL || c == NULL)
         return 0;
     h = sc_zz_poly_taylor_shift_horner(ctx, f, c);
     d = sc_zz_poly_taylor_shift_divconquer(ctx, f, c);
+    v = sc_zz_poly_taylor_shift_convolution(ctx, f, c);
     a = sc_zz_poly_taylor_shift(ctx, f, c);
-    ok = poly_equal(h, e) && poly_equal(d, e) && poly_equal(a, e);
-    sc_value_free_many(6, f, e, c, h, d, a);
+    ok = poly_equal(h, e) && poly_equal(d, e) && poly_equal(v, e) &&
+         poly_equal(a, e);
+    sc_value_free_many(7, f, e, c, h, d, v, a);
     return ok;
 }
 
@@ -66,7 +68,7 @@ static int test_random(sc_context *ctx, sc_parent *r)
     for (n = 0; n <= 48; n++)
         for (trial = 0; trial < 3; trial++) {
             sc_value *f = random_poly(ctx, r, n, 9), *c = sc_value_new_zz_checked(ctx);
-            sc_value *g = sc_value_new_zz_poly_checked(ctx, r, 2), *h, *d, *a, *q;
+            sc_value *g = sc_value_new_zz_poly_checked(ctx, r, 2), *h, *d, *v, *a, *q;
             int ok;
 
             if (f == NULL || c == NULL || g == NULL)
@@ -76,21 +78,38 @@ static int test_random(sc_context *ctx, sc_parent *r)
             mpz_set_ui(g->data.zz_poly.coeff[1], 1);
             h = sc_zz_poly_taylor_shift_horner(ctx, f, c);
             d = sc_zz_poly_taylor_shift_divconquer(ctx, f, c);
+            v = sc_zz_poly_taylor_shift_convolution(ctx, f, c);
             a = sc_zz_poly_taylor_shift(ctx, f, c);
             q = sc_zz_poly_compose(ctx, f, g);
-            ok = poly_equal(h, d) && poly_equal(h, a) && poly_equal(h, q);
-            sc_value_free_many(7, f, c, g, h, d, a, q);
+            ok = poly_equal(h, d) && poly_equal(h, v) && poly_equal(h, a) &&
+                 poly_equal(h, q);
+            sc_value_free_many(8, f, c, g, h, d, v, a, q);
             if (!ok)
                 return 0;
         }
     return 1;
 }
 
+static int test_convolution_large(sc_context *ctx, sc_parent *r)
+{
+    sc_value *f = random_poly(ctx, r, 257, 100), *c = sc_zz_from_str(ctx, "-3");
+    sc_value *d, *v;
+    int ok;
+
+    if (f == NULL || c == NULL)
+        return 0;
+    d = sc_zz_poly_taylor_shift_divconquer(ctx, f, c);
+    v = sc_zz_poly_taylor_shift_convolution(ctx, f, c);
+    ok = poly_equal(d, v);
+    sc_value_free_many(4, f, c, d, v);
+    return ok;
+}
+
 static int test_named(sc_context *ctx, sc_parent *r)
 {
     const long fc[] = { -7, 5, -2, 3 }, ec[] = { 19, 33, 16, 3 };
     sc_value *f = poly_si(ctx, r, 4, fc), *e = poly_si(ctx, r, 4, ec);
-    sc_value *c = sc_zz_from_str(ctx, "2"), *h, *d, *a;
+    sc_value *c = sc_zz_from_str(ctx, "2"), *h, *d, *v, *a;
     int ok;
 
     if (f == NULL || e == NULL || c == NULL)
@@ -98,8 +117,10 @@ static int test_named(sc_context *ctx, sc_parent *r)
     a = sc_call2(ctx, "taylor_shift", f, c);
     h = sc_call2(ctx, "taylor_shift_horner", f, c);
     d = sc_call2(ctx, "taylor_shift_dc", f, c);
-    ok = poly_equal(a, e) && poly_equal(h, e) && poly_equal(d, e);
-    sc_value_free_many(6, f, e, c, h, d, a);
+    v = sc_call2(ctx, "taylor_shift_conv", f, c);
+    ok = poly_equal(a, e) && poly_equal(h, e) && poly_equal(d, e) &&
+         poly_equal(v, e);
+    sc_value_free_many(7, f, e, c, h, d, v, a);
     return ok;
 }
 
@@ -109,7 +130,8 @@ int main(void)
     sc_parent r = { "ZZ[x]", SC_PARENT_POLY, &SC_ZZ, "x" };
 
     sc_context_init(&ctx);
-    if (!test_fixed(&ctx, &r) || !test_random(&ctx, &r) || !test_named(&ctx, &r)) {
+    if (!test_fixed(&ctx, &r) || !test_random(&ctx, &r) ||
+        !test_convolution_large(&ctx, &r) || !test_named(&ctx, &r)) {
         fprintf(stderr, "Taylor-shift test failed: %s\n", ctx.error);
         sc_context_clear(&ctx);
         return 1;

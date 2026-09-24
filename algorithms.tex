@@ -1043,9 +1043,10 @@ polynomial $x+c$.  Its coefficients satisfy the binomial formula
 \begin{equation}\label{eq:taylor-binomial}
  [x^j]f(x+c)=\sum_{i=j}^{n-1}a_i\binom{i}{j}c^{i-j}.
 \end{equation}
-The companion implementation provides both a specialized Horner shift and the
+The companion implementation provides a specialized Horner shift, the
 divide-and-conquer composition of Algorithm~\ref{alg:dc-composition} with
-$g=x+c$.
+$g=x+c$, and the one-convolution FFT algorithm of
+Section~\ref{sec:fft-taylor-shift}.
 
 \begin{algorithm}[In-place Horner Taylor shift]\label{alg:horner-taylor}
 Input $f=\sum_{i=0}^{n-1}a_ix^i$ and $c\in\ZZ$.
@@ -1121,8 +1122,10 @@ $g$ of length two.  The coefficient-growth statement follows from
 The specialized Horner shift has quadratic coefficient complexity but very
 small setup cost and uses only one coefficient array.  The balanced method
 reduces the asymptotic polynomial-arithmetic cost, but it constructs and
-multiplies powers of $x+c$.  A practical dispatcher should therefore retain
-both algorithms rather than choose solely from their asymptotic bounds.
+multiplies powers of $x+c$.  Section~\ref{sec:fft-taylor-shift} gives a third
+method using one exact convolution.  The three methods have sufficiently
+different setup and coefficient-size behaviour that their practical comparison
+should not be inferred from the asymptotic bounds alone.
 \end{remark}
 
 
@@ -8758,6 +8761,150 @@ movement.  The tuner therefore measures independent CRT-NTT and Fermat-ring
 full-product cutoffs for low and high products, using the requested edge length
 as part of the guard so a tiny edge of two large inputs never triggers a full
 FFT merely because the inputs themselves are large.
+
+
+\section{Taylor shift by one convolution}
+\label{sec:fft-taylor-shift}
+
+Taylor shift has a convolution form which avoids the multiplication tree of
+divide-and-conquer composition.  Write
+\[
+ f(x)=\sum_{i=0}^{n-1} a_i x^i,
+ \qquad
+ f(x+c)=\sum_{j=0}^{n-1} b_j x^j.
+\]
+The binomial formula gives
+\begin{equation}\label{eq:taylor-convolution-coeff}
+ b_j=\frac1{j!}\sum_{i=j}^{n-1} a_i i!\,
+          \frac{c^{i-j}}{(i-j)!}.
+\end{equation}
+Define two length-$n$ sequences
+\begin{equation}\label{eq:taylor-convolution-sequences}
+ u_{n-1-i}=a_i i!,\qquad
+ v_k=\frac{c^k}{k!}.
+\end{equation}
+If $w=u*v$ is their ordinary convolution, then
+\begin{equation}\label{eq:taylor-convolution-extract}
+ w_{n-1-j}=j!\,b_j.
+\end{equation}
+Thus one convolution computes the complete Taylor shift, provided the factorial
+divisions can be carried out exactly in the transform ring.
+
+Over $\ZZ$ one could clear all denominators in $v$ by multiplying by
+$(n-1)!$, but that needlessly enlarges every transformed coefficient by about
+$\log((n-1)!)$ bits.  The implementation instead works directly in a Fermat
+ring
+\[
+ R_K=\ZZ/(2^K+1)\ZZ,
+\]
+with $K$ a power of two chosen both for the transform length and for signed
+reconstruction of the answer.
+
+\begin{lemma}[Factorials are units in the Fermat transform ring]
+\label{lem:taylor-factorial-units}
+Let $K$ be a power of two and suppose $n\leq K$.  Then every integer
+$1,\ldots,n-1$, and hence every factorial $j!$ with $j<n$, is a unit modulo
+$2^K+1$.
+\end{lemma}
+
+\begin{proof}
+Let $q$ be a prime divisor of $2^K+1$.  Since $2^K\equiv-1\pmod q$, the order
+of $2$ modulo $q$ does not divide $K$.  It divides $2K$, and because $K$ is a
+power of two the only divisor of $2K$ which does not divide $K$ is $2K$
+itself.  Hence $2K\mid q-1$, so $q\geq2K+1>n$.  Therefore no prime divisor of
+$2^K+1$ divides any integer from $1$ through $n-1$.
+\end{proof}
+
+For a transform length $L$ equal to the least power of two with
+$L\geq2n-1$, one has $n\leq L/2$.  The SSA parameter choice enforces
+$K\geq L/2$, so the hypothesis of Lemma~\ref{lem:taylor-factorial-units} is
+automatic.
+
+\begin{algorithm}[FFT Taylor shift by convolution]
+\label{alg:fft-taylor-shift}
+Input $f=\sum_{i=0}^{n-1}a_ix^i\in\ZZ[x]$ and $c\in\ZZ$.
+\begin{enumerate}
+ \item If $n=0$ or $c=0$, return $f$.
+ \item Let $L$ be the least power of two with $L\geq2n-1$.
+ Choose a power of two $K\geq L/2$ such that every coefficient of
+ $f(x+c)$ has absolute value less than $(2^K+1)/2$.
+ \item In $R_K$, form
+ \[
+   u_{n-1-i}=a_i i!,\qquad v_k=c^k(k!)^{-1}
+   \quad(0\leq i,k<n).
+ \]
+ \item Zero-pad to length $L$, compute two forward transforms, multiply all
+ $L$ transform values pointwise, and apply the inverse transform to obtain
+ $w=u*v$ in $R_K$.
+ \item For $0\leq j<n$, set
+ \[
+   b_j=w_{n-1-j}(j!)^{-1}\in R_K,
+ \]
+ and return the centered integer representatives $b_j$.
+\end{enumerate}
+\end{algorithm}
+
+\begin{theorem}[Correctness of convolution Taylor shift]
+\label{thm:fft-taylor-shift}
+Algorithm~\ref{alg:fft-taylor-shift} returns $f(x+c)$.
+\end{theorem}
+
+\begin{proof}
+Lemma~\ref{lem:taylor-factorial-units} makes every inverse factorial in the
+algorithm well defined.  The convolution theorem and
+\eqref{eq:taylor-convolution-sequences} give
+\[
+ w_{n-1-j}
+ =\sum_{i=j}^{n-1}a_i i!\frac{c^{i-j}}{(i-j)!}
+ =j!\,b_j
+\]
+by \eqref{eq:taylor-convolution-coeff}.  Multiplication by $(j!)^{-1}$
+therefore recovers $b_j$ modulo $2^K+1$.  The modulus was chosen larger than
+twice the absolute value of every result coefficient, so centered
+reconstruction gives the unique integer coefficient $b_j$.
+\end{proof}
+
+A convenient reconstruction bound follows from
+\[
+ \|f(x+c)\|_1\leq\|f\|_1(1+|c|)^{n-1}.
+\]
+The implementation computes the bit length of this bound without clearing the
+factorial denominators: it forms $\|f\|_1$ and $(1+|c|)^{n-1}$ only for the
+purpose of selecting $K$.  Thus the extra $(n-1)!$ coefficient growth of the
+naive integral convolution never enters the transform.
+
+\begin{theorem}[Complexity of convolution Taylor shift]
+\label{thm:fft-taylor-shift-complexity}
+Let $L$ and $K$ be as in Algorithm~\ref{alg:fft-taylor-shift}.  With
+$O(K)$-bit Fermat-ring elements, root multiplications costing $O(K)$, and a
+ring multiplication costing $\MZ(K)$, the bit complexity is
+\[
+ O\bigl(KL\log L+L\MZ(K)\bigr).
+\]
+Since $L<4n$ for $n>1$, this is
+\[
+ O\bigl(Kn\log n+n\MZ(K)\bigr).
+\]
+The setup and final inverse-factorial scaling require only $O(n)$ additional
+ring operations.
+\end{theorem}
+
+\begin{proof}
+There are two forward length-$L$ transforms, one inverse transform and $L$
+pointwise products.  The factorial, inverse-factorial and power recurrences
+use only linearly many further modular operations, together with one modular
+inversion.  The displayed bound follows from the FFT cost, and
+$2n-1\leq L<4n-2$ gives the second form.
+\end{proof}
+
+This removes the extra multiplication-tree level present in divide-and-conquer
+composition when polynomial multiplication is quasi-linear.  Its practical
+crossover is nevertheless phase-sensitive because both the transform length
+$L$ and the Fermat modulus size $K$ change by powers of two.  The implementation
+therefore exposes the convolution method directly as
+\texttt{taylor\_shift\_conv}; the existing automatic Taylor-shift dispatcher is
+left unchanged until a phase-aware policy is justified by tuning rather than by
+a single machine-specific cutoff.
 
 \section{Number-theoretic transforms and CRT multiplication}
 

@@ -962,6 +962,7 @@ by `max_abs_bits` and the multiplication dispatcher rather than duplicated.
 taylor_shift(f, c)
 taylor_shift_horner(f, c)
 taylor_shift_dc(f, c)
+taylor_shift_conv(f, c)
 ```
 
 The Horner implementation is specialised for the linear factor `x + c`.  It updates
@@ -1338,3 +1339,29 @@ iteration 57, so large PRS steps automatically inherit the fast division and
 multiplication chain.  Random resultant tests now compare the public dispatcher,
 the Bareiss base case and Brown's PRS against the independent Sylvester
 reference determinant.
+
+
+## Iteration 59: convolution Taylor shift
+
+`ZZ[x]` now has an exact one-convolution Taylor-shift implementation, exposed as
+`taylor_shift_conv(f, c)`.  It uses the identity
+
+```text
+u[n - 1 - i] = a[i] * i!
+v[k] = c^k / k!
+w = u * v
+b[j] = w[n - 1 - j] / j!
+```
+
+but performs the divisions by factorials inside a Fermat transform ring rather
+than clearing denominators by `(n - 1)!`.  The transform-root condition implies
+that every factorial needed is a unit modulo `2^K + 1`; `K` is also chosen large
+enough that centered reconstruction recovers the integer result uniquely.  The
+FFT chapter of `algorithms.tex` gives the algorithm, the factorial-unit lemma,
+correctness and bit-complexity proofs.
+
+The automatic `taylor_shift` dispatcher is intentionally unchanged in this
+iteration.  Experiments show that the convolution/D&C comparison is strongly
+phase-dependent when the transform length or Fermat modulus crosses a power of
+two, so a single server-derived cutoff would be misleading.  The named method
+allows direct benchmarking while preserving the existing default behaviour.

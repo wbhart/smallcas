@@ -1,6 +1,7 @@
 #include "smallcas.h"
 #include "smallcas_fft.h"
 
+#include <limits.h>
 #include <stdint.h>
 #include <stdlib.h>
 
@@ -207,4 +208,174 @@ sc_value *sc_zz_poly_mul_ssa(sc_context *ctx, const sc_value *a, const sc_value 
     }
     outn = an + bn - 1;
     return sc_zz_poly_mul_ssa_core(ctx, a, b, outn, 0, outn, 0);
+}
+
+static int sc_ssa_taylor_params(size_t *k, unsigned *depth, unsigned *logn,
+                                const sc_value *a, const sc_value *c)
+{
+    size_t n = a->data.zz_poly.length, need, span, N, bs, bq;
+    mpz_t s, q, t;
+
+    if (n == 0 || n - 1 > ULONG_MAX ||
+        (GMP_NUMB_BITS & (GMP_NUMB_BITS - 1)) != 0 ||
+        n > SIZE_MAX / 2 + 1)
+        return 0;
+    span = 2 * n - 1;
+    *logn = (unsigned)sc_ssa_log2ceil(span);
+    if (*logn >= sizeof(size_t) * 8)
+        return 0;
+    N = (size_t)1 << *logn;
+    mpz_inits(s, q, t, NULL);
+    mpz_set_ui(s, 0);
+    for (size_t i = 0; i < n; i++) {
+        mpz_abs(t, a->data.zz_poly.coeff[i]);
+        mpz_add(s, s, t);
+    }
+    mpz_abs(t, c->data.z);
+    mpz_add_ui(t, t, 1);
+    mpz_pow_ui(q, t, (unsigned long)(n - 1));
+    bs = mpz_sgn(s) == 0 ? 0 : mpz_sizeinbase(s, 2);
+    bq = mpz_sizeinbase(q, 2);
+    mpz_clears(s, q, t, NULL);
+    if (bs > SIZE_MAX - bq - 1)
+        return 0;
+    need = bs + bq + 1;
+    if (need < (N >> 1))
+        need = N >> 1;
+    *k = GMP_NUMB_BITS;
+    while (*k < need) {
+        if (*k > SIZE_MAX / 2)
+            return 0;
+        *k <<= 1;
+    }
+    N = 2 * *k;
+    *depth = 0;
+    while (N > 1)
+        (*depth)++, N >>= 1;
+    return 1;
+}
+
+static int sc_ssa_taylor_fill(mp_ptr av, mp_ptr bv, mp_ptr rt, mp_ptr work,
+                              size_t n, const sc_value *a, const sc_value *c,
+                              const sc_fft_mod *m, mpz_srcptr mod, mpz_ptr invtop)
+{
+    mpz_t fact, invfact, cpow, t;
+
+    mpz_inits(fact, invfact, cpow, t, NULL);
+    mpz_set_ui(fact, 1);
+    for (size_t i = 0; i < n; i++) {
+        mpz_mod(t, a->data.zz_poly.coeff[i], mod);
+        mpz_mul(t, t, fact);
+        mpz_mod(t, t, mod);
+        sc_ssa_import(sc_fft_entry(av, n - 1 - i, m), t, m);
+        if (i + 1 < n)
+            mpz_mul_ui(fact, fact, (unsigned long)(i + 1)), mpz_mod(fact, fact, mod);
+    }
+    if (mpz_invert(invtop, fact, mod) == 0) {
+        mpz_clears(fact, invfact, cpow, t, NULL);
+        return 0;
+    }
+    mpz_set_ui(cpow, 1);
+    for (size_t i = 0; i < n; i++) {
+        sc_ssa_import(sc_fft_entry(bv, i, m), cpow, m);
+        if (i + 1 < n)
+            mpz_mul(cpow, cpow, c->data.z), mpz_mod(cpow, cpow, mod);
+    }
+    mpz_set(invfact, invtop);
+    for (size_t i = n; i-- != 0;) {
+        sc_ssa_import(rt, invfact, m);
+        sc_fft_mul(sc_fft_entry(bv, i, m), sc_fft_entry(bv, i, m), rt, m, work);
+        if (i != 0)
+            mpz_mul_ui(invfact, invfact, (unsigned long)i), mpz_mod(invfact, invfact, mod);
+    }
+    mpz_clears(fact, invfact, cpow, t, NULL);
+    return 1;
+}
+
+static void sc_ssa_taylor_extract(sc_value *r, mp_ptr av, mp_ptr rt, mp_ptr work,
+                                  size_t n, const sc_fft_mod *m, mpz_srcptr mod,
+                                  mpz_srcptr invtop)
+{
+    mpz_t invfact;
+
+    mpz_init_set(invfact, invtop);
+    for (size_t j = n; j-- != 0;) {
+        sc_ssa_import(rt, invfact, m);
+        sc_fft_mul(sc_fft_entry(av, n - 1 - j, m),
+                   sc_fft_entry(av, n - 1 - j, m), rt, m, work);
+        sc_ssa_export(r->data.zz_poly.coeff[j],
+                      sc_fft_entry_const(av, n - 1 - j, m), m, work);
+        if (j != 0)
+            mpz_mul_ui(invfact, invfact, (unsigned long)j), mpz_mod(invfact, invfact, mod);
+    }
+    mpz_clear(invfact);
+}
+
+sc_value *sc_zz_poly_taylor_shift_convolution_impl(sc_context *ctx,
+                                                   const sc_value *a,
+                                                   const sc_value *c)
+{
+    size_t n = a->data.zz_poly.length, k, limbs, words;
+    unsigned depth, logn;
+    sc_fft_mod m;
+    sc_fft_plan p;
+    mp_ptr av = NULL, bv, work = NULL, rt;
+    sc_value *r = NULL;
+    mpz_t mod, invtop;
+
+    if (n == 0 || mpz_sgn(c->data.z) == 0)
+        return sc_value_copy_checked(ctx, a);
+    if (!sc_ssa_taylor_params(&k, &depth, &logn, a, c) ||
+        !sc_fft_mod_init(&m, 1, (mp_bitcnt_t)k, 2, depth)) {
+        sc_set_error(ctx, "SSA Taylor-shift parameter setup failed");
+        return NULL;
+    }
+    if (!sc_fft_plan_init(&p, logn, &m))
+        goto fail_mod;
+    limbs = (size_t)m.n;
+    if (p.len > SIZE_MAX / limbs / 2 || limbs > (SIZE_MAX - 1) / 5)
+        goto fail_plan;
+    words = 2 * p.len * limbs;
+    av = calloc(words, sizeof(mp_limb_t));
+    work = calloc(5 * limbs + 1, sizeof(mp_limb_t));
+    r = sc_value_new_zz_poly_checked(ctx, a->parent, n);
+    if (av == NULL || work == NULL || r == NULL)
+        goto fail;
+    bv = av + p.len * limbs;
+    rt = work + 4 * limbs + 1;
+    mpz_inits(mod, invtop, NULL);
+    mpz_set_ui(mod, 1);
+    mpz_mul_2exp(mod, mod, (mp_bitcnt_t)k);
+    mpz_add_ui(mod, mod, 1);
+    if (!sc_ssa_taylor_fill(av, bv, rt, work, n, a, c, &m, mod, invtop)) {
+        sc_set_error(ctx, "Taylor-shift factorial is not invertible");
+        goto fail_mpz;
+    }
+    sc_ssa_forward(av, &p, &m, work);
+    sc_ssa_forward(bv, &p, &m, work);
+    for (size_t i = 0; i < p.len; i++)
+        sc_fft_mul(sc_fft_entry(av, i, &m), sc_fft_entry(av, i, &m),
+                   sc_fft_entry(bv, i, &m), &m, work);
+    sc_ssa_inverse(av, &p, &m, work);
+    sc_ssa_taylor_extract(r, av, rt, work, n, &m, mod, invtop);
+    mpz_clears(mod, invtop, NULL);
+    free(work);
+    free(av);
+    sc_fft_plan_clear(&p);
+    sc_fft_mod_clear(&m);
+    sc_zz_poly_normalize(r);
+    return r;
+fail_mpz:
+    mpz_clears(mod, invtop, NULL);
+fail:
+    sc_value_free(r);
+    free(work);
+    free(av);
+fail_plan:
+    sc_fft_plan_clear(&p);
+fail_mod:
+    sc_fft_mod_clear(&m);
+    if (ctx->error[0] == '\0')
+        sc_set_error(ctx, "out of memory in SSA Taylor shift");
+    return NULL;
 }

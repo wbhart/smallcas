@@ -366,6 +366,18 @@ sc_value *sc_poly_taylor_shift_divconquer(sc_context *ctx, const sc_value *a,
 }
 
 
+sc_value *sc_poly_taylor_shift_convolution(sc_context *ctx, const sc_value *a,
+                                           const sc_value *b)
+{
+    if (!sc_poly_scalar_pair(ctx, a, b))
+        return NULL;
+    if (a->parent->base == &SC_ZZ && b->kind == SC_VALUE_ZZ)
+        return sc_zz_poly_taylor_shift_convolution(ctx, a, b);
+    sc_set_error(ctx, "no convolution Taylor-shift method for this coefficient ring");
+    return NULL;
+}
+
+
 sc_value *sc_poly_derivative(sc_context *ctx, const sc_value *a)
 {
     if (!sc_poly_value(ctx, a, "derivative"))

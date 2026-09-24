@@ -315,6 +315,8 @@ sc_value *sc_call2(sc_context *ctx, const char *name,
         return sc_poly_taylor_shift_horner(ctx, a, b);
     if (sc_is_poly(a) && sc_is_zz(b) && strcmp(name, "taylor_shift_dc") == 0)
         return sc_poly_taylor_shift_divconquer(ctx, a, b);
+    if (sc_is_poly(a) && sc_is_zz(b) && strcmp(name, "taylor_shift_conv") == 0)
+        return sc_poly_taylor_shift_convolution(ctx, a, b);
     if (sc_is_poly(a) && sc_is_poly(b) && a->parent == b->parent &&
         strcmp(name, "compose") == 0)
         return sc_poly_compose(ctx, a, b);

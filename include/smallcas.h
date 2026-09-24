@@ -247,6 +247,8 @@ sc_value *sc_poly_taylor_shift_horner(sc_context *ctx, const sc_value *a,
                                       const sc_value *b);
 sc_value *sc_poly_taylor_shift_divconquer(sc_context *ctx, const sc_value *a,
                                           const sc_value *b);
+sc_value *sc_poly_taylor_shift_convolution(sc_context *ctx, const sc_value *a,
+                                           const sc_value *b);
 sc_value *sc_poly_derivative(sc_context *ctx, const sc_value *a);
 sc_value *sc_poly_nth_derivative(sc_context *ctx, const sc_value *a, size_t n);
 sc_value *sc_poly_discriminant(sc_context *ctx, const sc_value *a);
@@ -431,6 +433,9 @@ sc_value *sc_zz_poly_taylor_shift_horner_impl(sc_context *ctx, const sc_value *a
 sc_value *sc_zz_poly_taylor_shift_divconquer_impl(sc_context *ctx,
                                                   const sc_value *a,
                                                   const sc_value *b);
+sc_value *sc_zz_poly_taylor_shift_convolution_impl(sc_context *ctx,
+                                                   const sc_value *a,
+                                                   const sc_value *b);
 sc_value *sc_zz_poly_derivative_impl(sc_context *ctx, const sc_value *a);
 sc_value *sc_zz_poly_nth_derivative_impl(sc_context *ctx, const sc_value *a, size_t n);
 sc_value *sc_zz_poly_discriminant_impl(sc_context *ctx, const sc_value *a);
@@ -484,6 +489,8 @@ sc_value *sc_zz_poly_taylor_shift_horner(sc_context *ctx, const sc_value *a,
                                          const sc_value *b);
 sc_value *sc_zz_poly_taylor_shift_divconquer(sc_context *ctx, const sc_value *a,
                                              const sc_value *b);
+sc_value *sc_zz_poly_taylor_shift_convolution(sc_context *ctx, const sc_value *a,
+                                              const sc_value *b);
 
 sc_value *sc_coerce(sc_context *ctx, sc_parent *parent, const sc_value *a);
 sc_value *sc_add(sc_context *ctx, const sc_value *a, const sc_value *b);
