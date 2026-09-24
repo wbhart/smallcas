@@ -296,7 +296,12 @@ sc_value *sc_zz_poly_mulmid_toom63_tail(sc_context *ctx, const sc_value *a,
                                           const sc_value *b, size_t n);
 sc_value *sc_zz_poly_mul_ssa(sc_context *ctx, const sc_value *a, const sc_value *b);
 sc_value *sc_zz_poly_mul_ntt(sc_context *ctx, const sc_value *a, const sc_value *b);
+sc_value *sc_zz_poly_mulmid_ssa(sc_context *ctx, const sc_value *a,
+                                const sc_value *b, size_t n);
+sc_value *sc_zz_poly_mulmid_ntt(sc_context *ctx, const sc_value *a,
+                                const sc_value *b, size_t n);
 size_t sc_zz_poly_ntt_nprimes(const sc_value *a, const sc_value *b);
+size_t sc_zz_poly_mulmid_ntt_nprimes(const sc_value *a, const sc_value *b, size_t n);
 sc_value *sc_zz_poly_mul_ks(sc_context *ctx, const sc_value *a, const sc_value *b,
                                 mp_bitcnt_t bits);
 sc_value *sc_zz_poly_mul_karatsuba(sc_context *ctx,

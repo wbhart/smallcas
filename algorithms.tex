@@ -8537,6 +8537,114 @@ keeps the existing full transform path, including the tuned radix-$2$/MFA
 choice for SSA.  Thus the new code removes padding work without perturbing the
 already tuned endpoint implementation.
 
+\section{Middle products by cyclic wraparound}
+\label{sec:fft-middle-wrap}
+
+The convolution theorem can also accelerate the balanced middle product without
+computing the complete product.  The useful observation is that cyclic
+wraparound lands entirely below the desired middle window.
+
+Let $a$ have formal length $2n-1$, let $b$ have formal length $n$, and write
+\[
+ a(x)b(x)=\sum_{k=0}^{3n-3}c_kx^k.
+\]
+Choose an FFT length $L\geq2n-1$, and let
+\[
+ r(x)\equiv a(x)b(x)\pmod{x^L-1},\qquad \deg r<L.
+\]
+
+\begin{theorem}[Wraparound middle-product identity]
+\label{thm:fft-middle-wrap}
+For $n-1\leq k\leq2n-2$ one has
+\[
+ [x^k]r=c_k.
+\]
+Consequently the balanced middle product is obtained from coefficients
+$n-1,\ldots,2n-2$ of the cyclic convolution of length $L$.
+\end{theorem}
+
+\begin{proof}
+Since $L\geq2n-1$, the product degree $3n-3$ is less than $2L$.  Reduction
+modulo $x^L-1$ can therefore wrap at most once, so
+\[
+ [x^k]r=c_k+c_{k+L},
+\]
+where coefficients beyond degree $3n-3$ are zero.  If $k\geq n-1$, then
+\[
+ k+L\geq(n-1)+(2n-1)=3n-2>3n-3.
+\]
+Hence $c_{k+L}=0$ throughout the desired window.  Equivalently, every
+coefficient that does wrap around lands in degrees at most $n-2$, immediately
+below the middle product.
+\end{proof}
+
+Taking $L$ to be the least supported power of two gives
+\[
+ L=2^{\lceil\log_2(2n-1)\rceil}.
+\]
+This leads directly to the following transform algorithm.
+
+\begin{algorithm}[FFT wraparound middle product]
+\label{alg:fft-middle-wrap}
+Input $a$ of formal length $2n-1$ and $b$ of formal length $n$.
+\begin{enumerate}
+ \item Let $L$ be the least supported power of two with $L\geq2n-1$.
+ \item Zero-pad both inputs to length $L$ and compute their length-$L$
+ Fourier transforms.
+ \item Multiply the $L$ Fourier values pointwise and apply the inverse
+ length-$L$ transform.
+ \item Return coefficients $n-1,\ldots,2n-2$, shifted down by $n-1$.
+\end{enumerate}
+\end{algorithm}
+
+\begin{theorem}[Correctness and complexity of wraparound]
+\label{thm:fft-middle-wrap-complexity}
+Algorithm~\ref{alg:fft-middle-wrap} returns $\operatorname{MP}_n(a,b)$.
+It uses two forward transforms and one inverse transform of length $L$, together
+with $L$ pointwise products.  If ring elements occupy $O(K)$ bits, root
+multiplication costs $O(K)$, and a ring multiplication costs $\MZ(K)$, its bit
+complexity is
+\[
+ O\bigl(KL\log L+L\MZ(K)\bigr).
+\]
+Since $2n-1\leq L<4n-2$, this is
+\[
+ O\bigl(Kn\log n+n\MZ(K)\bigr).
+\]
+The cyclic coefficients obey the same $n$-term coefficient bound as the
+balanced middle product.
+\end{theorem}
+
+\begin{proof}
+Correctness is Theorem~\ref{thm:fft-middle-wrap} followed by the convolution
+theorem.  The operation count is three length-$L$ FFTs and $L$ pointwise
+products, which gives the displayed bit bound.
+
+For the coefficient bound, fix a residue class modulo $L$.  For each
+coefficient $b_j$ there is at most one index $i$ in the support of $a$ with
+$i+j$ in that residue class, because the support of $a$ has length at most
+$L$.  Thus every cyclic coefficient contains at most $n$ scalar products.
+The bound \eqref{eq:middle-coeff-bound} therefore remains valid, so neither
+CRT reconstruction nor the $2^K+1$ specialization needs an enlarged
+coefficient modulus merely because of wraparound.
+\end{proof}
+
+For comparison, computing the complete product by an ordinary padded FFT would
+use the least power of two at least $3n-2$.  The wraparound length is never
+larger and is sometimes half as large.  With the TFT available, however, the
+comparison is less monotone: truncated ordinary convolution avoids part of a
+larger transform, whereas wraparound uses a complete cyclic transform of the
+smaller length.  The appropriate crossover is therefore an implementation
+parameter to be measured rather than inferred only from transform lengths.
+
+The integer-polynomial implementation provides this construction in both
+exact transform backends.  The CRT-NTT version performs the cyclic convolution
+modulo each word-size prime and reconstructs only the $n$ required
+coefficients.  The $2^K+1$ version performs the same cyclic convolution in one
+Fermat ring, using the tuned radix-$2$/MFA choice for the complete transforms.
+These routines are initially exposed as middle-product kernels; the dispatcher
+cutoff is left to the middle-product tuning pass.
+
 \section{Number-theoretic transforms and CRT multiplication}
 
 Let

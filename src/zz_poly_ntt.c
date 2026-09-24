@@ -59,22 +59,41 @@ static size_t sc_ntt_log2ceil(size_t n)
     return k;
 }
 
-static int sc_ntt_params(size_t *np, unsigned *logn,
-                         const sc_value *a, const sc_value *b)
+static int sc_ntt_bound(size_t *np, const sc_value *a, const sc_value *b)
 {
     size_t an = a->data.zz_poly.length, bn = b->data.zz_poly.length;
     size_t small = an < bn ? an : bn, need;
     size_t ba = sc_zz_poly_max_abs_bits_raw(a);
     size_t bb = sc_zz_poly_max_abs_bits_raw(b);
 
-    if (an > SIZE_MAX - bn + 1 || ba > SIZE_MAX - bb)
-        return 0;
-    *logn = (unsigned)sc_ntt_log2ceil(an + bn - 1);
-    if (*logn > SC_NTT_DEPTH || ba + bb > SIZE_MAX - sc_ntt_log2ceil(small) - 1)
+    if (ba > SIZE_MAX - bb || ba + bb > SIZE_MAX - sc_ntt_log2ceil(small) - 1)
         return 0;
     need = ba + bb + sc_ntt_log2ceil(small) + 1;
     *np = (need + SC_NTT_PRIME_BITS - 1) / SC_NTT_PRIME_BITS;
     return *np <= sizeof(sc_ntt_primes) / sizeof(sc_ntt_primes[0]);
+}
+
+static int sc_ntt_params(size_t *np, unsigned *logn,
+                         const sc_value *a, const sc_value *b)
+{
+    size_t an = a->data.zz_poly.length, bn = b->data.zz_poly.length;
+
+    if (an > SIZE_MAX - bn + 1 || !sc_ntt_bound(np, a, b))
+        return 0;
+    *logn = (unsigned)sc_ntt_log2ceil(an + bn - 1);
+    return *logn <= SC_NTT_DEPTH;
+}
+
+static int sc_ntt_mid_params(size_t *np, unsigned *logn,
+                             const sc_value *a, const sc_value *b, size_t n)
+{
+    size_t span;
+
+    if (n == 0 || n > SIZE_MAX / 2 + 1 || !sc_ntt_bound(np, a, b))
+        return 0;
+    span = 2 * n - 1;
+    *logn = (unsigned)sc_ntt_log2ceil(span);
+    return *logn <= SC_NTT_DEPTH;
 }
 
 size_t sc_zz_poly_ntt_nprimes(const sc_value *a, const sc_value *b)
@@ -102,12 +121,14 @@ static mp_limb_t sc_ntt_inverse(mpz_t t, mpz_t u, mpz_srcptr M, mp_limb_t p)
     return mpz_invert(t, t, u) ? (mp_limb_t)mpz_get_ui(t) : 0;
 }
 
-static void sc_ntt_crt(sc_value *r, mp_srcptr v, size_t n, mpz_t M,
-                       mp_limb_t p, mp_limb_t inv)
+static void sc_ntt_crt(sc_value *r, mp_srcptr v, size_t start, size_t n,
+                       mpz_t M, mp_limb_t p, mp_limb_t inv)
 {
     for (size_t i = 0; i < n; i++) {
-        mp_limb_t x = (mp_limb_t)mpz_fdiv_ui(r->data.zz_poly.coeff[i], (unsigned long)p);
-        mp_limb_t d = v[i] >= x ? v[i] - x : p - (x - v[i]);
+        mp_limb_t x = (mp_limb_t)mpz_fdiv_ui(r->data.zz_poly.coeff[i],
+                                              (unsigned long)p);
+        mp_limb_t y = v[start + i];
+        mp_limb_t d = y >= x ? y - x : p - (x - y);
         mp_limb_t q = sc_ntt_mulmod(d, inv, p);
 
         mpz_addmul_ui(r->data.zz_poly.coeff[i], M, (unsigned long)q);
@@ -115,8 +136,8 @@ static void sc_ntt_crt(sc_value *r, mp_srcptr v, size_t n, mpz_t M,
 }
 
 static int sc_ntt_prime_pass(sc_value *r, const sc_value *a, const sc_value *b,
-                             unsigned logn, size_t pi, mpz_t M, mpz_t t, mpz_t u,
-                             mp_ptr v, mp_ptr work)
+                             size_t start, int cyclic, unsigned logn, size_t pi,
+                             mpz_t M, mpz_t t, mpz_t u, mp_ptr v, mp_ptr work)
 {
     const sc_ntt_prime *q = sc_ntt_primes + pi;
     sc_fft_mod m;
@@ -143,7 +164,7 @@ static int sc_ntt_prime_pass(sc_value *r, const sc_value *a, const sc_value *b,
         v[i] = (mp_limb_t)mpz_fdiv_ui(a->data.zz_poly.coeff[i], (unsigned long)p);
     for (size_t i = 0; i < b->data.zz_poly.length; i++)
         w[i] = (mp_limb_t)mpz_fdiv_ui(b->data.zz_poly.coeff[i], (unsigned long)p);
-    if (r->data.zz_poly.length < n) {
+    if (!cyclic && r->data.zz_poly.length < n) {
         sc_fft_forward_tft(v, a->data.zz_poly.length, r->data.zz_poly.length,
                            &plan, &m, work);
         sc_fft_forward_tft(w, b->data.zz_poly.length, r->data.zz_poly.length,
@@ -152,17 +173,78 @@ static int sc_ntt_prime_pass(sc_value *r, const sc_value *a, const sc_value *b,
         sc_fft_forward(v, &plan, &m, work);
         sc_fft_forward(w, &plan, &m, work);
     }
-    for (size_t i = 0; i < r->data.zz_poly.length; i++)
+    for (size_t i = 0; i < (cyclic ? n : r->data.zz_poly.length); i++)
         sc_fft_mul(v + i, v + i, w + i, &m, work);
-    if (r->data.zz_poly.length < n)
+    if (!cyclic && r->data.zz_poly.length < n)
         sc_fft_inverse_tft(v, r->data.zz_poly.length, &plan, &m, work);
     else
         sc_fft_inverse(v, &plan, &m, work);
-    sc_ntt_crt(r, v, r->data.zz_poly.length, M, p, inv);
+    sc_ntt_crt(r, v, start, r->data.zz_poly.length, M, p, inv);
     mpz_mul_ui(M, M, (unsigned long)p);
     sc_fft_plan_clear(&plan);
     sc_fft_mod_clear(&m);
     return 1;
+}
+
+size_t sc_zz_poly_mulmid_ntt_nprimes(const sc_value *a, const sc_value *b, size_t n)
+{
+    size_t np;
+    unsigned logn;
+
+    return sc_ntt_mid_params(&np, &logn, a, b, n) ? np : 0;
+}
+
+sc_value *sc_zz_poly_mulmid_ntt(sc_context *ctx, const sc_value *a,
+                                const sc_value *b, size_t n)
+{
+    size_t an, bn, np, len, start;
+    unsigned logn;
+    sc_value *r = NULL;
+    mp_ptr v = NULL, work = NULL;
+    mpz_t M, half, t, u;
+
+    if (a == NULL || b == NULL)
+        return NULL;
+    an = a->data.zz_poly.length;
+    bn = b->data.zz_poly.length;
+    if (n == 0 || an == 0 || bn == 0)
+        return sc_value_new_zz_poly_checked(ctx, a->parent, 0);
+    if (n > SIZE_MAX / 2 + 1 || an > 2 * n - 1 || bn > n ||
+        GMP_NUMB_BITS != 64 || ULONG_MAX < UINT64_MAX ||
+        !sc_ntt_mid_params(&np, &logn, a, b, n)) {
+        sc_set_error(ctx, "NTT middle-product parameters unsupported");
+        return NULL;
+    }
+    len = (size_t)1 << logn;
+    start = n - 1;
+    r = sc_value_new_zz_poly_checked(ctx, a->parent, n);
+    v = calloc(2 * len, sizeof(mp_limb_t));
+    work = calloc(5, sizeof(mp_limb_t));
+    if (r == NULL || v == NULL || work == NULL)
+        goto fail;
+    mpz_inits(M, half, t, u, NULL);
+    mpz_set_ui(M, 1);
+    for (size_t i = 0; i < np; i++)
+        if (!sc_ntt_prime_pass(r, a, b, start, 1, logn, i, M, t, u, v, work))
+            goto fail_mpz;
+    mpz_fdiv_q_2exp(half, M, 1);
+    for (size_t i = 0; i < n; i++)
+        if (mpz_cmp(r->data.zz_poly.coeff[i], half) > 0)
+            mpz_sub(r->data.zz_poly.coeff[i], r->data.zz_poly.coeff[i], M);
+    mpz_clears(M, half, t, u, NULL);
+    free(work);
+    free(v);
+    sc_zz_poly_normalize(r);
+    return r;
+fail_mpz:
+    mpz_clears(M, half, t, u, NULL);
+fail:
+    free(work);
+    free(v);
+    sc_value_free(r);
+    if (ctx->error[0] == '\0')
+        sc_set_error(ctx, "out of memory in NTT middle product");
+    return NULL;
 }
 
 sc_value *sc_zz_poly_mul_ntt(sc_context *ctx, const sc_value *a, const sc_value *b)
@@ -194,7 +276,7 @@ sc_value *sc_zz_poly_mul_ntt(sc_context *ctx, const sc_value *a, const sc_value 
     mpz_inits(M, half, t, u, NULL);
     mpz_set_ui(M, 1);
     for (size_t i = 0; i < np; i++)
-        if (!sc_ntt_prime_pass(r, a, b, logn, i, M, t, u, v, work))
+        if (!sc_ntt_prime_pass(r, a, b, 0, 0, logn, i, M, t, u, v, work))
             goto fail_mpz;
     mpz_fdiv_q_2exp(half, M, 1);
     for (size_t i = 0; i < outn; i++)

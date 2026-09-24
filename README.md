@@ -1,4 +1,4 @@
-# smallcas iter53
+# smallcas iter54
 
 A deliberately tiny computer algebra system in C. The current checkpoint has `ZZ` and
 univariate polynomial rings over `ZZ`, backed directly by GMP integers. GNU
@@ -58,7 +58,10 @@ patches should therefore change `tuning_defaults.h`, not the local `tuning.h`.
 The FFT layer also provides cache-friendly TFT/ITFT transforms.  The NTT and SSA
 multipliers use a truncated round trip whenever the product length is not already a
 power of two, computing only the Fourier values and pointwise products that are needed.
-Exact power-of-two products retain the existing full-transform path.
+Exact power-of-two products retain the existing full-transform path.  Balanced middle
+products additionally have exact CRT-NTT and SSA wraparound kernels using a cyclic
+transform of the least power-of-two length at least `2*n - 1`; dispatcher cutoffs are
+left for the next middle-product tuning pass.
 
 ## Example
 
@@ -1266,3 +1269,17 @@ first differentiation.
 The implementation now follows that recurrence.  `tests/calculus.c` additionally compares
 the direct nth derivative with repeated first differentiation for every order from 0 through
 25 on a degree-24 polynomial.
+
+## Iteration 54: FFT wraparound middle products
+
+The FFT chapter now proves the cyclic-wraparound identity for a balanced size-`n`
+middle product: with cyclic length at least `2*n - 1`, every aliased coefficient lands
+below the requested degrees `n - 1` through `2*n - 2`.  It gives the resulting
+three-transform algorithm, coefficient bound and bit complexity, and compares the
+smaller complete cyclic transform with ordinary TFT multiplication.
+
+The implementation adds independent CRT-NTT and SSA wraparound middle-product kernels.
+Tests compare both exact backends with the classical middle product across transform
+boundaries and multi-prime CRT cases.  The balanced dispatcher is intentionally unchanged
+until these kernels can be tuned against classical, Toom42 and Toom63 on the target
+machine.

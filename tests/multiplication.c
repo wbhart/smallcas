@@ -385,6 +385,34 @@ static int test_balanced_mulmid(sc_context *ctx, sc_parent *r)
     return 1;
 }
 
+static int test_fft_mulmid(sc_context *ctx, sc_parent *r)
+{
+    static const size_t cases[][3] = {
+        { 7, 20, 19 }, { 8, 35, 31 }, { 9, 90, 87 }, { 31, 48, 45 },
+        { 32, 130, 127 }, { 33, 260, 251 }, { 65, 75, 73 }
+    };
+
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        size_t n = cases[i][0];
+        size_t an = 2 * n - 1 - (i % 3);
+        size_t bn = n - (i % 2);
+        sc_value *a = make_ssa_poly(ctx, r, an, cases[i][1],
+                                    (unsigned)(18100 + i));
+        sc_value *b = make_ssa_poly(ctx, r, bn, cases[i][2],
+                                    (unsigned)(19100 + i));
+        sc_value *want = a && b ? sc_zz_poly_mulmid_classical(ctx, a, b,
+                                                               n - 1, n) : NULL;
+        sc_value *ntt = a && b ? sc_zz_poly_mulmid_ntt(ctx, a, b, n) : NULL;
+        sc_value *ssa = a && b ? sc_zz_poly_mulmid_ssa(ctx, a, b, n) : NULL;
+        int ok = same_poly(want, ntt) && same_poly(want, ssa);
+
+        sc_value_free_many(5, a, b, want, ntt, ssa);
+        if (!ok)
+            return 0;
+    }
+    return 1;
+}
+
 static int test_toom63_mulmid(sc_context *ctx, sc_parent *r)
 {
     size_t n;
@@ -517,7 +545,8 @@ int main(void)
         !test_dispatch(&ctx, &r) ||
         !test_toom3_dispatch(&ctx, &r) || !test_recursive_toom3(&ctx, &r) ||
         !test_karatsuba_dispatch(&ctx, &r) || !test_cancellation(&ctx, &r) ||
-        !test_balanced_mulmid(&ctx, &r) || !test_toom63_mulmid(&ctx, &r) ||
+        !test_balanced_mulmid(&ctx, &r) || !test_fft_mulmid(&ctx, &r) ||
+        !test_toom63_mulmid(&ctx, &r) ||
         !test_toom63_tail(&ctx, &r) || !test_recursive_toom63(&ctx, &r) ||
         !test_recursive_toom63_tail(&ctx, &r) ||
         !test_mulhigh_short_tail(&ctx, &r) ||
