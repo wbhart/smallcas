@@ -1,5 +1,7 @@
 #include "smallcas.h"
 
+#include <stdint.h>
+
 static size_t sc_zz_poly_valuation(const sc_value *a)
 {
     size_t i = 0;
@@ -111,12 +113,13 @@ static int sc_zz_poly_balanced(const sc_value *a, const sc_value *b)
     return large <= small + small / 2;
 }
 
-static int sc_zz_poly_use_ntt(const sc_value *a, const sc_value *b)
+static int sc_zz_poly_use_ntt_cutoff(const sc_value *a, const sc_value *b,
+                                     size_t cutoff)
 {
     size_t an = a->data.zz_poly.length, bn = b->data.zz_poly.length;
     size_t small = an < bn ? an : bn, np, ba, bb, bits;
 
-    if (small < SC_MUL_NTT_CUTOFF || !sc_zz_poly_balanced(a, b))
+    if (small < cutoff || !sc_zz_poly_balanced(a, b))
         return 0;
     ba = sc_zz_poly_max_abs_bits_raw(a);
     bb = sc_zz_poly_max_abs_bits_raw(b);
@@ -124,20 +127,107 @@ static int sc_zz_poly_use_ntt(const sc_value *a, const sc_value *b)
     if (bits >= small)
         return 0;
     np = sc_zz_poly_ntt_nprimes(a, b);
-    return np != 0 && small / np >= SC_MUL_NTT_CUTOFF;
+    return np != 0 && small / np >= cutoff;
 }
 
-static int sc_zz_poly_use_ssa(const sc_value *a, const sc_value *b)
+static int sc_zz_poly_use_ssa_cutoff(const sc_value *a, const sc_value *b,
+                                     size_t cutoff)
 {
     size_t an = a->data.zz_poly.length, bn = b->data.zz_poly.length;
     size_t small = an < bn ? an : bn, ba, bb, bits;
 
-    if (small < SC_MUL_SSA_CUTOFF || !sc_zz_poly_balanced(a, b))
+    if (small < cutoff || !sc_zz_poly_balanced(a, b))
         return 0;
     ba = sc_zz_poly_max_abs_bits_raw(a);
     bb = sc_zz_poly_max_abs_bits_raw(b);
     bits = ba > bb ? ba : bb;
     return bits >= small;
+}
+
+static int sc_zz_poly_use_ntt(const sc_value *a, const sc_value *b)
+{
+    return sc_zz_poly_use_ntt_cutoff(a, b, SC_MUL_NTT_CUTOFF);
+}
+
+static int sc_zz_poly_use_ssa(const sc_value *a, const sc_value *b)
+{
+    return sc_zz_poly_use_ssa_cutoff(a, b, SC_MUL_SSA_CUTOFF);
+}
+
+static int sc_zz_poly_use_short_ntt(const sc_value *a, const sc_value *b,
+                                    size_t n, size_t cutoff)
+{
+    size_t an = a->data.zz_poly.length, bn = b->data.zz_poly.length;
+    size_t small = an < bn ? an : bn, ba, bb, bits, np;
+
+    if (n < cutoff || !sc_zz_poly_balanced(a, b))
+        return 0;
+    ba = sc_zz_poly_max_abs_bits_raw(a);
+    bb = sc_zz_poly_max_abs_bits_raw(b);
+    bits = ba > bb ? ba : bb;
+    if (bits >= small)
+        return 0;
+    np = sc_zz_poly_ntt_nprimes(a, b);
+    return np != 0 && n / np >= cutoff;
+}
+
+static int sc_zz_poly_use_short_ssa(const sc_value *a, const sc_value *b,
+                                    size_t n, size_t cutoff)
+{
+    size_t an = a->data.zz_poly.length, bn = b->data.zz_poly.length;
+    size_t small = an < bn ? an : bn, ba, bb, bits;
+
+    if (n < cutoff || !sc_zz_poly_balanced(a, b))
+        return 0;
+    ba = sc_zz_poly_max_abs_bits_raw(a);
+    bb = sc_zz_poly_max_abs_bits_raw(b);
+    bits = ba > bb ? ba : bb;
+    return bits >= small;
+}
+
+static int sc_zz_poly_use_mulmid_ntt(const sc_value *a, const sc_value *b, size_t n)
+{
+    size_t ba, bb, bits, np;
+
+    if (n < SC_MULMID_NTT_CUTOFF || n > SIZE_MAX / 2 + 1 ||
+        a->data.zz_poly.length > 2 * n - 1 || b->data.zz_poly.length > n)
+        return 0;
+    ba = sc_zz_poly_max_abs_bits_raw(a);
+    bb = sc_zz_poly_max_abs_bits_raw(b);
+    bits = ba > bb ? ba : bb;
+    if (bits >= n)
+        return 0;
+    np = sc_zz_poly_mulmid_ntt_nprimes(a, b, n);
+    return np != 0 && n / np >= SC_MULMID_NTT_CUTOFF;
+}
+
+static int sc_zz_poly_use_mulmid_ssa(const sc_value *a, const sc_value *b, size_t n)
+{
+    size_t ba, bb, bits;
+
+    if (n < SC_MULMID_SSA_CUTOFF || n > SIZE_MAX / 2 + 1 ||
+        a->data.zz_poly.length > 2 * n - 1 || b->data.zz_poly.length > n)
+        return 0;
+    ba = sc_zz_poly_max_abs_bits_raw(a);
+    bb = sc_zz_poly_max_abs_bits_raw(b);
+    bits = ba > bb ? ba : bb;
+    return bits >= n;
+}
+
+static sc_value *sc_zz_poly_fft_window(sc_context *ctx, const sc_value *a,
+                                       const sc_value *b, size_t start, size_t n,
+                                       int ntt)
+{
+    sc_value *p = ntt ? sc_zz_poly_mul_ntt(ctx, a, b) :
+                        sc_zz_poly_mul_ssa(ctx, a, b);
+    sc_value view, *r;
+
+    if (p == NULL)
+        return NULL;
+    view = sc_zz_poly_view(p, start, n);
+    r = sc_value_copy_checked(ctx, &view);
+    sc_value_free(p);
+    return r;
 }
 
 sc_value *sc_zz_poly_add(sc_context *ctx, const sc_value *a, const sc_value *b)
@@ -196,6 +286,10 @@ sc_value *sc_zz_poly_mullow(sc_context *ctx, const sc_value *a, const sc_value *
     total = an + bn - 1;
     if (n >= total)
         return sc_zz_poly_mul(ctx, a, b);
+    if (sc_zz_poly_use_short_ntt(a, b, n, SC_MULLOW_NTT_CUTOFF))
+        return sc_zz_poly_fft_window(ctx, a, b, 0, n, 1);
+    if (sc_zz_poly_use_short_ssa(a, b, n, SC_MULLOW_SSA_CUTOFF))
+        return sc_zz_poly_fft_window(ctx, a, b, 0, n, 0);
     if (n <= SC_MULLOW_DC_CUTOFF)
         return sc_zz_poly_mullow_classical(ctx, a, b, n);
     return sc_zz_poly_mullow_dc(ctx, a, b, n);
@@ -215,6 +309,10 @@ sc_value *sc_zz_poly_mulhigh(sc_context *ctx, const sc_value *a, const sc_value 
     total = an + bn - 1;
     if (n >= total)
         return sc_zz_poly_mul(ctx, a, b);
+    if (sc_zz_poly_use_short_ntt(a, b, n, SC_MULHIGH_NTT_CUTOFF))
+        return sc_zz_poly_fft_window(ctx, a, b, total - n, n, 1);
+    if (sc_zz_poly_use_short_ssa(a, b, n, SC_MULHIGH_SSA_CUTOFF))
+        return sc_zz_poly_fft_window(ctx, a, b, total - n, n, 0);
     return sc_zz_poly_mulhigh_reverse(ctx, a, b, n);
 }
 
@@ -225,6 +323,10 @@ sc_value *sc_zz_poly_mulmid_balanced(sc_context *ctx, const sc_value *a,
         return NULL;
     if (n == 0 || a->data.zz_poly.length == 0 || b->data.zz_poly.length == 0)
         return sc_value_new_zz_poly_checked(ctx, a->parent, 0);
+    if (sc_zz_poly_use_mulmid_ntt(a, b, n))
+        return sc_zz_poly_mulmid_ntt(ctx, a, b, n);
+    if (sc_zz_poly_use_mulmid_ssa(a, b, n))
+        return sc_zz_poly_mulmid_ssa(ctx, a, b, n);
     if (n <= SC_MULMID_CLASSICAL_CUTOFF)
         return sc_zz_poly_mulmid_classical(ctx, a, b, n - 1, n);
     if (n >= SC_MULMID_TOOM63_CUTOFF) {

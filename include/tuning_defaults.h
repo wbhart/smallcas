@@ -12,6 +12,15 @@ extern size_t sc_tune_mul_karatsuba_low_bits_cutoff;
 extern size_t sc_tune_mul_ntt_cutoff;
 extern size_t sc_tune_mul_ssa_cutoff;
 extern unsigned sc_tune_ssa_mfa_cutoff_log;
+extern size_t sc_tune_mullow_dc_cutoff;
+extern size_t sc_tune_mullow_ntt_cutoff;
+extern size_t sc_tune_mullow_ssa_cutoff;
+extern size_t sc_tune_mulhigh_ntt_cutoff;
+extern size_t sc_tune_mulhigh_ssa_cutoff;
+extern size_t sc_tune_mulmid_classical_cutoff;
+extern size_t sc_tune_mulmid_toom63_cutoff;
+extern size_t sc_tune_mulmid_ntt_cutoff;
+extern size_t sc_tune_mulmid_ssa_cutoff;
 #define SC_MUL_KS_CUTOFF sc_tune_mul_ks_cutoff
 #define SC_MUL_TOOM3_CUTOFF sc_tune_mul_toom3_cutoff
 #define SC_MUL_KARATSUBA_CUTOFF sc_tune_mul_karatsuba_cutoff
@@ -20,6 +29,15 @@ extern unsigned sc_tune_ssa_mfa_cutoff_log;
 #define SC_MUL_NTT_CUTOFF sc_tune_mul_ntt_cutoff
 #define SC_MUL_SSA_CUTOFF sc_tune_mul_ssa_cutoff
 #define SC_SSA_MFA_CUTOFF_LOG sc_tune_ssa_mfa_cutoff_log
+#define SC_MULLOW_DC_CUTOFF sc_tune_mullow_dc_cutoff
+#define SC_MULLOW_NTT_CUTOFF sc_tune_mullow_ntt_cutoff
+#define SC_MULLOW_SSA_CUTOFF sc_tune_mullow_ssa_cutoff
+#define SC_MULHIGH_NTT_CUTOFF sc_tune_mulhigh_ntt_cutoff
+#define SC_MULHIGH_SSA_CUTOFF sc_tune_mulhigh_ssa_cutoff
+#define SC_MULMID_CLASSICAL_CUTOFF sc_tune_mulmid_classical_cutoff
+#define SC_MULMID_TOOM63_CUTOFF sc_tune_mulmid_toom63_cutoff
+#define SC_MULMID_NTT_CUTOFF sc_tune_mulmid_ntt_cutoff
+#define SC_MULMID_SSA_CUTOFF sc_tune_mulmid_ssa_cutoff
 #else
 #ifndef SC_MUL_KS_CUTOFF
 #define SC_MUL_KS_CUTOFF ((size_t)11)
@@ -52,13 +70,31 @@ extern unsigned sc_tune_ssa_mfa_cutoff_log;
 #define SC_FFT_MFA_BASE_LOG ((unsigned)8)
 #endif
 #ifndef SC_MULLOW_DC_CUTOFF
-#define SC_MULLOW_DC_CUTOFF ((size_t)16)
+#define SC_MULLOW_DC_CUTOFF ((size_t)108)
+#endif
+#ifndef SC_MULLOW_NTT_CUTOFF
+#define SC_MULLOW_NTT_CUTOFF ((size_t)1170)
+#endif
+#ifndef SC_MULLOW_SSA_CUTOFF
+#define SC_MULLOW_SSA_CUTOFF ((size_t)151)
+#endif
+#ifndef SC_MULHIGH_NTT_CUTOFF
+#define SC_MULHIGH_NTT_CUTOFF ((size_t)983)
+#endif
+#ifndef SC_MULHIGH_SSA_CUTOFF
+#define SC_MULHIGH_SSA_CUTOFF ((size_t)135)
 #endif
 #ifndef SC_MULMID_CLASSICAL_CUTOFF
-#define SC_MULMID_CLASSICAL_CUTOFF ((size_t)16)
+#define SC_MULMID_CLASSICAL_CUTOFF ((size_t)33)
 #endif
 #ifndef SC_MULMID_TOOM63_CUTOFF
-#define SC_MULMID_TOOM63_CUTOFF ((size_t)48)
+#define SC_MULMID_TOOM63_CUTOFF ((size_t)39)
+#endif
+#ifndef SC_MULMID_NTT_CUTOFF
+#define SC_MULMID_NTT_CUTOFF ((size_t)651)
+#endif
+#ifndef SC_MULMID_SSA_CUTOFF
+#define SC_MULMID_SSA_CUTOFF ((size_t)86)
 #endif
 #ifndef SC_MULMID_GENERAL_CLASSICAL_CUTOFF
 #define SC_MULMID_GENERAL_CLASSICAL_CUTOFF ((size_t)24)

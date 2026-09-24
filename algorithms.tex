@@ -8642,8 +8642,61 @@ exact transform backends.  The CRT-NTT version performs the cyclic convolution
 modulo each word-size prime and reconstructs only the $n$ required
 coefficients.  The $2^K+1$ version performs the same cyclic convolution in one
 Fermat ring, using the tuned radix-$2$/MFA choice for the complete transforms.
-These routines are initially exposed as middle-product kernels; the dispatcher
-cutoff is left to the middle-product tuning pass.
+The balanced middle-product dispatcher tunes the classical, Toom-$4/2$,
+Toom-$6/3$, CRT-NTT wraparound and Fermat-ring wraparound regimes.  The two
+FFT backends have separate cutoffs because the CRT cost depends on the number
+of primes whereas the Fermat-ring cost depends on the coefficient size.  The
+Toom-$6/3$ search begins only after the tuned classical--Toom-$4/2$ boundary,
+so pairwise timing noise cannot produce an inconsistent ordering of the Toom
+regimes.
+
+\section{Low and high products in the FFT range}
+\label{sec:fft-low-high-full}
+
+At present there is no corresponding transform identity in the implementation
+that computes a low or high half product with substantially less FFT work than
+a complete product.  Nevertheless the FFT backends are still useful once they
+beat the recursive low-product algorithms: compute the complete product with
+the exact CRT-NTT or Fermat-ring multiplier and discard the unrequested half.
+For a high product this direct route also avoids reversing both inputs and the
+output.
+
+\begin{algorithm}[Full-FFT edge product]
+\label{alg:fft-edge-full}
+Input polynomials $a,b$, a requested length $r$, and a choice
+$E\in\{\mathrm{low},\mathrm{high}\}$.
+\begin{enumerate}
+ \item Compute the complete product $c=ab$ with the selected exact FFT backend.
+ \item If $E=\mathrm{low}$, return the first $r$ coefficients of $c$.
+ \item If $E=\mathrm{high}$, return the last $r$ coefficients of $c$, shifted
+ down to start at degree zero.
+\end{enumerate}
+\end{algorithm}
+
+\begin{theorem}
+Algorithm~\ref{alg:fft-edge-full} returns the requested low or high product.
+If the complete product costs $F(a,b)$ bit operations, its cost is
+$F(a,b)+O(rB)$, where $B$ bounds the output coefficient size.  Thus this route
+inherits the bit complexity of the complete FFT product and provides no
+asymptotic short-product saving.
+\end{theorem}
+
+\begin{proof}
+The requested edge is a literal coefficient window of $ab$, so correctness is
+immediate.  Apart from the complete multiplication, only $r$ coefficient
+copies are required.  Copying an $O(B)$-bit coefficient costs $O(B)$ bit
+operations.
+\end{proof}
+
+The crossover must be timed rather than inferred from the full-product FFT
+cutoff.  A recursive low product can remain faster after FFT multiplication
+first becomes competitive, because it computes only triangular pieces of its
+subproblems; eventually its extra recursion outweighs that saving.  The high
+product has a second crossover because the reversal reduction adds linear data
+movement.  The tuner therefore measures independent CRT-NTT and Fermat-ring
+full-product cutoffs for low and high products, using the requested edge length
+as part of the guard so a tiny edge of two large inputs never triggers a full
+FFT merely because the inputs themselves are large.
 
 \section{Number-theoretic transforms and CRT multiplication}
 

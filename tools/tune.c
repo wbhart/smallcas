@@ -11,6 +11,7 @@
 #include <time.h>
 
 typedef sc_value *(*mul_fn)(sc_context *, const sc_value *, const sc_value *);
+typedef sc_value *(*short_fn)(sc_context *, const sc_value *, const sc_value *, size_t);
 
 typedef struct {
     size_t loss, win, cut;
@@ -331,7 +332,11 @@ static unsigned tune_mfa(void)
 static int write_tuning(const tune_result *ks, const tune_result *toom,
                         const tune_result *kar, const tune_result *low,
                         const tune_result *ntt, size_t ntt_cut,
-                        const tune_result *ssa, unsigned mfa_cut)
+                        const tune_result *ssa, unsigned mfa_cut,
+                        const tune_result *lowdc, size_t low_ntt, size_t low_ssa,
+                        size_t high_ntt, size_t high_ssa,
+                        const tune_result *midclass, const tune_result *mid63,
+                        size_t mid_ntt, size_t mid_ssa)
 {
     const char *tmp = "include/tuning.h.tmp";
     const char *dst = "include/tuning.h";
@@ -362,6 +367,22 @@ static int write_tuning(const tune_result *ks, const tune_result *toom,
         fputs("#define SC_SSA_MFA_CUTOFF_LOG ((unsigned)-1)\n", f);
     else
         fprintf(f, "#define SC_SSA_MFA_CUTOFF_LOG ((unsigned)%u)\n", mfa_cut);
+    fprintf(f, "#define SC_MULLOW_DC_CUTOFF ((size_t)%zu)\n", lowdc->cut);
+#define WRITE_SHORT_CUTOFF(name, value) do { \
+        if ((value) == (size_t)-1) \
+            fprintf(f, "#define %s ((size_t)-1)\n", (name)); \
+        else \
+            fprintf(f, "#define %s ((size_t)%zu)\n", (name), (value)); \
+    } while (0)
+    WRITE_SHORT_CUTOFF("SC_MULLOW_NTT_CUTOFF", low_ntt);
+    WRITE_SHORT_CUTOFF("SC_MULLOW_SSA_CUTOFF", low_ssa);
+    WRITE_SHORT_CUTOFF("SC_MULHIGH_NTT_CUTOFF", high_ntt);
+    WRITE_SHORT_CUTOFF("SC_MULHIGH_SSA_CUTOFF", high_ssa);
+    fprintf(f, "#define SC_MULMID_CLASSICAL_CUTOFF ((size_t)%zu)\n", midclass->cut);
+    fprintf(f, "#define SC_MULMID_TOOM63_CUTOFF ((size_t)%zu)\n", mid63->cut);
+    WRITE_SHORT_CUTOFF("SC_MULMID_NTT_CUTOFF", mid_ntt);
+    WRITE_SHORT_CUTOFF("SC_MULMID_SSA_CUTOFF", mid_ssa);
+#undef WRITE_SHORT_CUTOFF
     fputs("#endif\n\n#include \"tuning_defaults.h\"\n\n#endif\n", f);
     bad = ferror(f);
     if (fclose(f) != 0)
@@ -431,20 +452,278 @@ static tune_result tune_pair(sc_context *ctx, sc_parent *r, gmp_randstate_t stat
     return tr;
 }
 
+
+static sc_value *mullow_dispatch(sc_context *ctx, const sc_value *a,
+                                 const sc_value *b, size_t n)
+{
+    return sc_zz_poly_mullow(ctx, a, b, n);
+}
+
+static sc_value *mulhigh_dispatch(sc_context *ctx, const sc_value *a,
+                                  const sc_value *b, size_t n)
+{
+    return sc_zz_poly_mulhigh(ctx, a, b, n);
+}
+
+static sc_value *fft_window(sc_context *ctx, const sc_value *a, const sc_value *b,
+                            size_t n, int high, int ntt)
+{
+    sc_value *p = ntt ? sc_zz_poly_mul_ntt(ctx, a, b) : sc_zz_poly_mul_ssa(ctx, a, b);
+    size_t total = a->data.zz_poly.length + b->data.zz_poly.length - 1;
+    sc_value view, *r;
+
+    if (p == NULL)
+        return NULL;
+    view = sc_zz_poly_view(p, high ? total - n : 0, n);
+    r = sc_value_copy_checked(ctx, &view);
+    sc_value_free(p);
+    return r;
+}
+
+static sc_value *mullow_ntt(sc_context *ctx, const sc_value *a,
+                            const sc_value *b, size_t n)
+{
+    return fft_window(ctx, a, b, n, 0, 1);
+}
+
+static sc_value *mullow_ssa(sc_context *ctx, const sc_value *a,
+                            const sc_value *b, size_t n)
+{
+    return fft_window(ctx, a, b, n, 0, 0);
+}
+
+static sc_value *mulhigh_ntt(sc_context *ctx, const sc_value *a,
+                             const sc_value *b, size_t n)
+{
+    return fft_window(ctx, a, b, n, 1, 1);
+}
+
+static sc_value *mulhigh_ssa(sc_context *ctx, const sc_value *a,
+                             const sc_value *b, size_t n)
+{
+    return fft_window(ctx, a, b, n, 1, 0);
+}
+
+static sc_value *mulmid_classical(sc_context *ctx, const sc_value *a,
+                                  const sc_value *b, size_t n)
+{
+    return sc_zz_poly_mulmid_classical(ctx, a, b, n - 1, n);
+}
+
+static sc_value *mulmid_toom42(sc_context *ctx, const sc_value *a,
+                               const sc_value *b, size_t n)
+{
+    return n & 1 ? sc_zz_poly_mulmid_toom42_odd(ctx, a, b, n) :
+                   sc_zz_poly_mulmid_toom42(ctx, a, b, n);
+}
+
+static sc_value *mulmid_toom63(sc_context *ctx, const sc_value *a,
+                               const sc_value *b, size_t n)
+{
+    sc_zz_poly_toom63_ws ws;
+
+    if (n % 3 != 0)
+        return sc_zz_poly_mulmid_toom63_tail(ctx, a, b, n);
+    if (!sc_zz_poly_toom63_ws_init(ctx, &ws, a, b, n / 3))
+        return NULL;
+    return sc_zz_poly_mulmid_toom63(ctx, &ws);
+}
+
+static sc_value *mulmid_dispatch(sc_context *ctx, const sc_value *a,
+                                 const sc_value *b, size_t n)
+{
+    return sc_zz_poly_mulmid_balanced(ctx, a, b, n);
+}
+
+static void timed_short(sc_context *ctx, short_fn fn, const sc_value *a,
+                        const sc_value *b, size_t n, double *sum)
+{
+    double t = now();
+    sc_value *r = fn(ctx, a, b, n);
+
+    *sum += now() - t;
+    if (r == NULL) {
+        fprintf(stderr, "tuning short product failed: %s\n", ctx->error);
+        exit(1);
+    }
+    sc_value_free(r);
+}
+
+static double short_run(sc_context *ctx, short_fn fn, const sc_value *a,
+                        const sc_value *b, size_t n, size_t reps)
+{
+    double t = now();
+
+    for (size_t i = 0; i < reps; i++) {
+        sc_value *r = fn(ctx, a, b, n);
+
+        if (r == NULL) {
+            fprintf(stderr, "tuning short product failed: %s\n", ctx->error);
+            exit(1);
+        }
+        sc_value_free(r);
+    }
+    return now() - t;
+}
+
+static double short_pair_sample(sc_context *ctx, short_fn old, short_fn new,
+                                const sc_value *a, const sc_value *b, size_t n,
+                                size_t reps, int reverse)
+{
+    double ta = 0.0, tb = 0.0;
+
+    for (size_t i = 0; i < reps; i++) {
+        if ((i ^ (size_t)reverse) & 1) {
+            timed_short(ctx, new, a, b, n, &tb);
+            timed_short(ctx, old, a, b, n, &ta);
+        } else {
+            timed_short(ctx, old, a, b, n, &ta);
+            timed_short(ctx, new, a, b, n, &tb);
+        }
+    }
+    return tb / ta;
+}
+
+static double short_ratio(sc_context *ctx, short_fn old, short_fn new,
+                          const sc_value *a, const sc_value *b, size_t n,
+                          double *relmad)
+{
+    double v[15], d[15], ta, tb, med;
+    size_t reps = 1, ns = 0;
+
+    while (reps < 4096) {
+        ta = short_run(ctx, old, a, b, n, reps);
+        tb = short_run(ctx, new, a, b, n, reps);
+        if (ta + tb >= 0.010)
+            break;
+        reps <<= 1;
+    }
+    for (ns = 0; ns < 15; ns++) {
+        v[ns] = short_pair_sample(ctx, old, new, a, b, n, reps, (int)(ns & 1));
+        if (ns >= 4) {
+            double q[15];
+
+            for (size_t i = 0; i <= ns; i++)
+                q[i] = v[i];
+            med = median(q, ns + 1);
+            for (size_t i = 0; i <= ns; i++)
+                d[i] = fabs(v[i] - med);
+            *relmad = median(d, ns + 1) / med;
+            if (*relmad <= 0.01)
+                return med;
+        }
+    }
+    med = median(v, ns);
+    for (size_t i = 0; i < ns; i++)
+        d[i] = fabs(v[i] - med);
+    *relmad = median(d, ns) / med;
+    return med;
+}
+
+static tune_result tune_short_pair(sc_context *ctx, sc_parent *r,
+                                   gmp_randstate_t state, const char *name,
+                                   short_fn old, short_fn new, size_t bits,
+                                   int bits_equal_n, int middle,
+                                   size_t lo, size_t hi, size_t fallback)
+{
+    tune_result tr = { 0, 0, fallback, 0.0, 0.0 };
+
+    printf("\n%s\n", name);
+    for (size_t n = lo; n <= hi;) {
+        size_t b = bits_equal_n ? n : bits;
+        sc_value *a = random_poly(ctx, r, middle ? 2 * n - 1 : n, b, state);
+        sc_value *c = random_poly(ctx, r, n, b, state);
+        double mad = 0.0, q;
+
+        if (a == NULL || c == NULL) {
+            fprintf(stderr, "out of memory while tuning short product\n");
+            exit(1);
+        }
+        q = short_ratio(ctx, old, new, a, c, n, &mad);
+        printf("  n=%-6zu bits=%-6zu new/old=%7.4f  MAD=%5.2f%%\n",
+               n, b, q, 100.0 * mad);
+        sc_value_free_many(2, a, c);
+        if (q >= 1.05) {
+            tr.loss = n;
+            tr.loss_ratio = q;
+        } else if (q <= 0.95) {
+            tr.win = n;
+            tr.win_ratio = q;
+            tr.cut = tr.loss != 0 ? tr.loss + (n - tr.loss) / 2 : n;
+            break;
+        }
+        if (n == hi)
+            break;
+        {
+            size_t next = next_size(n);
+            n = next > hi ? hi : next;
+        }
+    }
+    if (tr.win == 0) {
+        if (fallback == (size_t)-1)
+            puts("  no 5% win found; keeping disabled");
+        else
+            printf("  no 5%% win found; keeping %zu\n", fallback);
+    } else if (tr.loss == 0)
+        printf("  already >5%% faster at first point; cutoff <= %zu\n", tr.cut);
+    else
+        printf("  5%% bracket [%zu, %zu], midpoint %zu\n", tr.loss, tr.win, tr.cut);
+    return tr;
+}
+
+static size_t ntt_cutoff_full(sc_context *ctx, sc_parent *r, gmp_randstate_t state,
+                              const tune_result *tr)
+{
+    sc_value *a, *b;
+    size_t np, cut = tr->cut;
+
+    if (tr->win == 0)
+        return (size_t)-1;
+    a = random_poly(ctx, r, tr->cut, 48, state);
+    b = random_poly(ctx, r, tr->cut, 48, state);
+    np = a && b ? sc_zz_poly_ntt_nprimes(a, b) : 0;
+    if (np != 0)
+        cut /= np;
+    sc_value_free_many(2, a, b);
+    return cut;
+}
+
+static size_t ntt_cutoff_mid(sc_context *ctx, sc_parent *r, gmp_randstate_t state,
+                             const tune_result *tr)
+{
+    sc_value *a, *b;
+    size_t np, cut = tr->cut;
+
+    if (tr->win == 0)
+        return (size_t)-1;
+    a = random_poly(ctx, r, 2 * tr->cut - 1, 48, state);
+    b = random_poly(ctx, r, tr->cut, 48, state);
+    np = a && b ? sc_zz_poly_mulmid_ntt_nprimes(a, b, tr->cut) : 0;
+    if (np != 0)
+        cut /= np;
+    sc_value_free_many(2, a, b);
+    return cut;
+}
+
 int main(void)
 {
     sc_context ctx;
     sc_parent r = { "PolynomialRing(ZZ)", SC_PARENT_POLY, &SC_ZZ, "x" };
     gmp_randstate_t state;
-    tune_result ks, kar, low, toom, ntt, ssa;
-    size_t ntt_cut, toom_fallback;
+    tune_result ks, kar, low, toom, ntt, ssa, lowdc;
+    tune_result low_ntt_r, low_ssa_r, high_ntt_r, high_ssa_r;
+    tune_result midclass, mid63, mid_ntt_r, mid_ssa_r;
+    size_t ntt_cut, toom_fallback, low_ntt_cut, low_ssa_cut;
+    size_t high_ntt_cut, high_ssa_cut, mid_ntt_cut, mid_ssa_cut, mid63_lo;
     unsigned mfa_cut;
 
     sc_context_init(&ctx);
     gmp_randinit_default(state);
     gmp_randseed_ui(state, 20260923);
-    sc_tune_mul_ntt_cutoff = (size_t)-1;
-    sc_tune_mul_ssa_cutoff = (size_t)-1;
+    sc_tune_mul_ntt_cutoff = sc_tune_mul_ssa_cutoff = (size_t)-1;
+    sc_tune_mullow_ntt_cutoff = sc_tune_mullow_ssa_cutoff = (size_t)-1;
+    sc_tune_mulhigh_ntt_cutoff = sc_tune_mulhigh_ssa_cutoff = (size_t)-1;
+    sc_tune_mulmid_ntt_cutoff = sc_tune_mulmid_ssa_cutoff = (size_t)-1;
 
     puts("Full multiplication tuning: 5% loss/win bracket, midpoint cutoff, 1% MAD.");
     ks = tune_pair(&ctx, &r, state, "classical -> Kronecker (8-bit coefficients)",
@@ -466,21 +745,77 @@ int main(void)
     sc_tune_mul_toom3_cutoff = toom.cut;
     ntt = tune_pair(&ctx, &r, state, "lower dispatcher -> CRT-NTT (48-bit coefficients)",
                     sc_zz_poly_mul, sc_zz_poly_mul_ntt, 48, 0, 96, 16384, (size_t)-1);
-    ntt_cut = ntt.cut;
-    if (ntt.win != 0) {
-        sc_value *a = random_poly(&ctx, &r, ntt.cut, 48, state);
-        sc_value *b = random_poly(&ctx, &r, ntt.cut, 48, state);
-        size_t np = sc_zz_poly_ntt_nprimes(a, b);
-
-        if (np != 0)
-            ntt_cut = ntt.cut / np;
-        sc_value_free_many(2, a, b);
-    }
+    ntt_cut = ntt_cutoff_full(&ctx, &r, state, &ntt);
     mfa_cut = tune_mfa();
     sc_tune_ssa_mfa_cutoff_log = mfa_cut;
     ssa = tune_pair(&ctx, &r, state, "lower dispatcher -> SSA (bits = length)",
                     sc_zz_poly_mul, sc_zz_poly_mul_ssa, 0, 1, 32, 2048, (size_t)-1);
-    if (!write_tuning(&ks, &toom, &kar, &low, &ntt, ntt_cut, &ssa, mfa_cut)) {
+    sc_tune_mul_ntt_cutoff = ntt_cut;
+    sc_tune_mul_ssa_cutoff = ssa.win ? ssa.cut : (size_t)-1;
+
+    puts("\nLow/high product tuning: lower short algorithm -> full FFT product and slice.");
+    lowdc = tune_short_pair(&ctx, &r, state,
+                            "mullo classical -> divide-and-conquer (256-bit coefficients)",
+                            sc_zz_poly_mullow_classical, sc_zz_poly_mullow_dc,
+                            256, 0, 0, 8, 256, sc_tune_mullow_dc_cutoff);
+    sc_tune_mullow_dc_cutoff = lowdc.cut;
+    low_ntt_r = tune_short_pair(&ctx, &r, state,
+                                "mullo lower dispatcher -> full CRT-NTT (48-bit coefficients)",
+                                mullow_dispatch, mullow_ntt, 48, 0, 0,
+                                96, 16384, (size_t)-1);
+    low_ntt_cut = ntt_cutoff_full(&ctx, &r, state, &low_ntt_r);
+    sc_tune_mullow_ntt_cutoff = low_ntt_cut;
+    low_ssa_r = tune_short_pair(&ctx, &r, state,
+                                "mullo lower dispatcher -> full SSA (bits = length)",
+                                mullow_dispatch, mullow_ssa, 0, 1, 0,
+                                32, 2048, (size_t)-1);
+    low_ssa_cut = low_ssa_r.win ? low_ssa_r.cut : (size_t)-1;
+    sc_tune_mullow_ssa_cutoff = low_ssa_cut;
+    high_ntt_r = tune_short_pair(&ctx, &r, state,
+                                 "mulhi reversed mullo -> direct full CRT-NTT "
+                                 "(48-bit coefficients)",
+                                 mulhigh_dispatch, mulhigh_ntt, 48, 0, 0,
+                                 96, 16384, (size_t)-1);
+    high_ntt_cut = ntt_cutoff_full(&ctx, &r, state, &high_ntt_r);
+    sc_tune_mulhigh_ntt_cutoff = high_ntt_cut;
+    high_ssa_r = tune_short_pair(&ctx, &r, state,
+                                 "mulhi reversed mullo -> direct full SSA (bits = length)",
+                                 mulhigh_dispatch, mulhigh_ssa, 0, 1, 0,
+                                 32, 2048, (size_t)-1);
+    high_ssa_cut = high_ssa_r.win ? high_ssa_r.cut : (size_t)-1;
+    sc_tune_mulhigh_ssa_cutoff = high_ssa_cut;
+
+    puts("\nMiddle product tuning: classical -> Toom-4/2 -> Toom-6/3 -> FFT wraparound.");
+    toom_fallback = sc_tune_mulmid_toom63_cutoff;
+    sc_tune_mulmid_toom63_cutoff = (size_t)-1;
+    midclass = tune_short_pair(&ctx, &r, state,
+                               "mulmid classical -> Toom-4/2 (256-bit coefficients)",
+                               mulmid_classical, mulmid_toom42, 256, 0, 1,
+                               8, 256, sc_tune_mulmid_classical_cutoff);
+    sc_tune_mulmid_classical_cutoff = midclass.cut;
+    mid63_lo = midclass.cut < 24 ? 24 : midclass.cut + 1;
+    mid63 = tune_short_pair(&ctx, &r, state,
+                            "mulmid Toom-4/2 chain -> Toom-6/3 (256-bit coefficients)",
+                            mulmid_dispatch, mulmid_toom63, 256, 0, 1,
+                            mid63_lo, 768, toom_fallback);
+    sc_tune_mulmid_toom63_cutoff = mid63.cut;
+    mid_ntt_r = tune_short_pair(&ctx, &r, state,
+                                "mulmid lower dispatcher -> CRT-NTT wraparound "
+                                "(48-bit coefficients)",
+                                mulmid_dispatch, sc_zz_poly_mulmid_ntt, 48, 0, 1,
+                                64, 16384, (size_t)-1);
+    mid_ntt_cut = ntt_cutoff_mid(&ctx, &r, state, &mid_ntt_r);
+    sc_tune_mulmid_ntt_cutoff = mid_ntt_cut;
+    mid_ssa_r = tune_short_pair(&ctx, &r, state,
+                                "mulmid lower dispatcher -> SSA wraparound (bits = length)",
+                                mulmid_dispatch, sc_zz_poly_mulmid_ssa, 0, 1, 1,
+                                32, 2048, (size_t)-1);
+    mid_ssa_cut = mid_ssa_r.win ? mid_ssa_r.cut : (size_t)-1;
+    sc_tune_mulmid_ssa_cutoff = mid_ssa_cut;
+
+    if (!write_tuning(&ks, &toom, &kar, &low, &ntt, ntt_cut, &ssa, mfa_cut,
+                      &lowdc, low_ntt_cut, low_ssa_cut, high_ntt_cut, high_ssa_cut,
+                      &midclass, &mid63, mid_ntt_cut, mid_ssa_cut)) {
         gmp_randclear(state);
         sc_context_clear(&ctx);
         return 1;

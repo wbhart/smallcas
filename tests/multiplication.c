@@ -491,6 +491,53 @@ static int test_recursive_toom63(sc_context *ctx, sc_parent *r)
 }
 
 
+static int test_fft_short_dispatch(sc_context *ctx, sc_parent *r)
+{
+    static const size_t edge_cases[][2] = { { 180, 180 }, { 2400, 48 } };
+
+    for (size_t k = 0; k < 2; k++) {
+        size_t n = edge_cases[k][0], bits = edge_cases[k][1];
+        sc_value *a = make_ssa_poly(ctx, r, n, bits, (unsigned)(20100 + k));
+        sc_value *b = make_ssa_poly(ctx, r, n, bits, (unsigned)(20200 + k));
+        sc_value *full = k == 0 ? sc_zz_poly_mul_ssa(ctx, a, b) :
+                                  sc_zz_poly_mul_ntt(ctx, a, b);
+        sc_value *lo = sc_zz_poly_mullow(ctx, a, b, n);
+        sc_value *hi = sc_zz_poly_mulhigh(ctx, a, b, n);
+        sc_value lv, hv;
+        int ok;
+
+        if (full == NULL || lo == NULL || hi == NULL) {
+            sc_value_free_many(5, a, b, full, lo, hi);
+            return 0;
+        }
+        lv = sc_zz_poly_view(full, 0, n);
+        hv = sc_zz_poly_view(full, full->data.zz_poly.length - n, n);
+        ok = same_poly(lo, &lv) && same_poly(hi, &hv);
+        sc_value_free_many(5, a, b, full, lo, hi);
+        if (!ok)
+            return 0;
+    }
+    {
+        static const size_t mid_cases[][2] = { { 100, 100 }, { 800, 48 } };
+
+        for (size_t k = 0; k < 2; k++) {
+            size_t n = mid_cases[k][0], bits = mid_cases[k][1];
+            sc_value *a = make_ssa_poly(ctx, r, 2 * n - 1, bits,
+                                        (unsigned)(20300 + k));
+            sc_value *b = make_ssa_poly(ctx, r, n, bits, (unsigned)(20400 + k));
+            sc_value *want = k == 0 ? sc_zz_poly_mulmid_ssa(ctx, a, b, n) :
+                                      sc_zz_poly_mulmid_ntt(ctx, a, b, n);
+            sc_value *got = sc_zz_poly_mulmid_balanced(ctx, a, b, n);
+            int ok = same_poly(want, got);
+
+            sc_value_free_many(4, a, b, want, got);
+            if (!ok)
+                return 0;
+        }
+    }
+    return 1;
+}
+
 static int test_mulhigh_short_tail(sc_context *ctx, sc_parent *r)
 {
     size_t edge = 7, an = 4096, bn = 3072, total = an + bn - 1;
@@ -549,6 +596,7 @@ int main(void)
         !test_toom63_mulmid(&ctx, &r) ||
         !test_toom63_tail(&ctx, &r) || !test_recursive_toom63(&ctx, &r) ||
         !test_recursive_toom63_tail(&ctx, &r) ||
+        !test_fft_short_dispatch(&ctx, &r) ||
         !test_mulhigh_short_tail(&ctx, &r) ||
         !test_mulmid(&ctx, &r)) {
         fprintf(stderr, "polynomial multiplication comparison failed: %s\n", ctx.error);
