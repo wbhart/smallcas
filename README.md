@@ -217,8 +217,12 @@ k = bits(a) + bits(b) + ceil(log2(min(length(a), length(b)))) + 1.
 
 This makes every product coefficient strictly smaller than `2^(k-1)` in
 absolute value. `sc_zz_poly_mul_ks` evaluates both polynomials at `2^k`, uses
-one GMP integer multiplication, then recovers balanced base-`2^k` digits. The
-KS implementation is 28 counted lines.
+one GMP integer multiplication, then recovers balanced base-`2^k` digits.
+Packing and unpacking operate directly on GMP limb arrays: fixed-width signed
+digits are converted to ordinary base-`2^k` digits with one carry/borrow bit,
+and bit windows are copied without repeatedly shifting a growing `mpz`. Thus
+the representation conversion touches only linear total packed data, matching
+the complexity stated in `algorithms.tex`.
 
 Karatsuba recursively calls the normal `ZZ[x]` multiplication dispatcher, so
 subproducts may independently choose their implementation, including KS.

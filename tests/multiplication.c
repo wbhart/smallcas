@@ -240,6 +240,33 @@ static int test_grid(sc_context *ctx, sc_parent *r)
     return 1;
 }
 
+static int test_ks_leading_zeros(sc_context *ctx, sc_parent *r)
+{
+    sc_value *a = sc_value_new_zz_poly_checked(ctx, r, 19);
+    sc_value *b = sc_value_new_zz_poly_checked(ctx, r, 17);
+    sc_value *want, *got;
+    int ok;
+
+    if (a == NULL || b == NULL)
+        return 0;
+    for (size_t i = 0; i < 15; i++) {
+        mpz_set_si(a->data.zz_poly.coeff[i], (long)(7 * i + 3));
+        if (i & 1)
+            mpz_neg(a->data.zz_poly.coeff[i], a->data.zz_poly.coeff[i]);
+    }
+    for (size_t i = 0; i < 13; i++) {
+        mpz_set_si(b->data.zz_poly.coeff[i], (long)(5 * i + 1));
+        if ((i & 3) == 0)
+            mpz_neg(b->data.zz_poly.coeff[i], b->data.zz_poly.coeff[i]);
+    }
+    mpz_neg(a->data.zz_poly.coeff[14], a->data.zz_poly.coeff[14]);
+    want = sc_zz_poly_mul_classical(ctx, a, b);
+    got = sc_zz_poly_mul_ks(ctx, a, b, ks_bits(a, b));
+    ok = same_poly(want, got);
+    sc_value_free_many(4, a, b, want, got);
+    return ok;
+}
+
 static int test_dispatch(sc_context *ctx, sc_parent *r)
 {
     sc_value *a = make_poly(ctx, r, 40, 3001);
@@ -589,7 +616,7 @@ int main(void)
     sc_context_init(&ctx);
     if (!test_ssa(&ctx, &r) || !test_ntt(&ctx, &r) ||
         !test_power(&ctx, &r) || !test_grid(&ctx, &r) ||
-        !test_dispatch(&ctx, &r) ||
+        !test_ks_leading_zeros(&ctx, &r) || !test_dispatch(&ctx, &r) ||
         !test_toom3_dispatch(&ctx, &r) || !test_recursive_toom3(&ctx, &r) ||
         !test_karatsuba_dispatch(&ctx, &r) || !test_cancellation(&ctx, &r) ||
         !test_balanced_mulmid(&ctx, &r) || !test_fft_mulmid(&ctx, &r) ||

@@ -398,37 +398,134 @@ sc_value *sc_zz_poly_mulmid_toom63_tail(sc_context *ctx, const sc_value *a,
     return out;
 }
 
-sc_value *sc_zz_poly_mul_ks(sc_context *ctx, const sc_value *a, const sc_value *b,
-                                mp_bitcnt_t bits)
+static void sc_zz_poly_ks_finish(mpz_t z, mp_ptr p, size_t n)
 {
-    size_t i, n = a->data.zz_poly.length + b->data.zz_poly.length - 1;
+    while (n != 0 && p[n - 1] == 0)
+        n--;
+    mpz_limbs_finish(z, (mp_size_t)n);
+}
+
+static void sc_zz_poly_ks_insert(mp_ptr dst, size_t limbs, mp_bitcnt_t off,
+                                 mpz_srcptr digit)
+{
+    size_t q = (size_t)(off / GMP_NUMB_BITS);
+    unsigned sh = (unsigned)(off % GMP_NUMB_BITS);
+    mp_srcptr src = mpz_limbs_read(digit);
+    size_t sn = mpz_size(digit);
+
+    for (size_t j = 0; j < sn; j++) {
+        if (q + j < limbs)
+            dst[q + j] |= src[j] << sh;
+        if (sh != 0 && q + j + 1 < limbs)
+            dst[q + j + 1] |= src[j] >> (GMP_NUMB_BITS - sh);
+    }
+}
+
+static int sc_zz_poly_ks_sign(const sc_value *a)
+{
+    for (size_t i = a->data.zz_poly.length; i-- > 0;) {
+        int s = mpz_sgn(a->data.zz_poly.coeff[i]);
+
+        if (s != 0)
+            return s;
+    }
+    return 0;
+}
+
+static void sc_zz_poly_ks_pack(mpz_t z, const sc_value *a, mp_bitcnt_t bits, int sign)
+{
+    size_t n = a->data.zz_poly.length;
+    mp_bitcnt_t total = bits * (mp_bitcnt_t)n;
+    size_t limbs = (size_t)((total + GMP_NUMB_BITS - 1) / GMP_NUMB_BITS);
+    mp_ptr dst = mpz_limbs_write(z, (mp_size_t)limbs);
+    mpz_t digit, base;
+    int borrow = 0;
+
+    for (size_t i = 0; i < limbs; i++)
+        dst[i] = 0;
+    mpz_inits(digit, base, NULL);
+    mpz_setbit(base, bits);
+    for (size_t i = 0; i < n; i++) {
+        mpz_set(digit, a->data.zz_poly.coeff[i]);
+        if (sign < 0)
+            mpz_neg(digit, digit);
+        if (borrow)
+            mpz_sub_ui(digit, digit, 1);
+        borrow = mpz_sgn(digit) < 0;
+        if (borrow)
+            mpz_add(digit, digit, base);
+        sc_zz_poly_ks_insert(dst, limbs, bits * (mp_bitcnt_t)i, digit);
+    }
+    mpz_clears(digit, base, NULL);
+    sc_zz_poly_ks_finish(z, dst, limbs);
+}
+
+static void sc_zz_poly_ks_extract(mpz_t digit, mp_srcptr src, size_t sn,
+                                  mp_bitcnt_t off, mp_bitcnt_t bits)
+{
+    size_t q = (size_t)(off / GMP_NUMB_BITS);
+    unsigned sh = (unsigned)(off % GMP_NUMB_BITS);
+    size_t dn = (size_t)((bits + GMP_NUMB_BITS - 1) / GMP_NUMB_BITS);
+    mp_ptr dst = mpz_limbs_write(digit, (mp_size_t)dn);
+
+    for (size_t j = 0; j < dn; j++) {
+        mp_limb_t x = q + j < sn ? src[q + j] >> sh : 0;
+        if (sh != 0 && q + j + 1 < sn)
+            x |= src[q + j + 1] << (GMP_NUMB_BITS - sh);
+        dst[j] = x;
+    }
+    if (bits % GMP_NUMB_BITS != 0)
+        dst[dn - 1] &= ((mp_limb_t)1 << (bits % GMP_NUMB_BITS)) - 1;
+    sc_zz_poly_ks_finish(digit, dst, dn);
+}
+
+static void sc_zz_poly_ks_unpack(sc_value *r, mpz_srcptr z, mp_bitcnt_t bits, int sign)
+{
+    mp_srcptr src = mpz_limbs_read(z);
+    size_t sn = mpz_size(z), n = r->data.zz_poly.length;
+    mpz_t digit, base;
+    int carry = 0;
+
+    mpz_inits(digit, base, NULL);
+    mpz_setbit(base, bits);
+    for (size_t i = 0; i < n; i++) {
+        int wrap, neg;
+
+        sc_zz_poly_ks_extract(digit, src, sn, bits * (mp_bitcnt_t)i, bits);
+        if (carry)
+            mpz_add_ui(digit, digit, 1);
+        wrap = mpz_tstbit(digit, bits);
+        if (wrap)
+            mpz_clrbit(digit, bits);
+        neg = mpz_tstbit(digit, bits - 1);
+        if (neg)
+            mpz_sub(digit, digit, base);
+        carry = wrap || neg;
+        mpz_set(r->data.zz_poly.coeff[i], digit);
+        if (sign < 0)
+            mpz_neg(r->data.zz_poly.coeff[i], r->data.zz_poly.coeff[i]);
+    }
+    mpz_clears(digit, base, NULL);
+}
+
+sc_value *sc_zz_poly_mul_ks(sc_context *ctx, const sc_value *a, const sc_value *b,
+                            mp_bitcnt_t bits)
+{
+    size_t n = a->data.zz_poly.length + b->data.zz_poly.length - 1;
     sc_value *r = sc_value_new_zz_poly_checked(ctx, a->parent, n);
-    mpz_t aa, bb, cc, t, base;
+    int sa, sb;
+    mpz_t aa, bb, cc;
 
     if (r == NULL)
         return NULL;
-    mpz_inits(aa, bb, cc, t, base, NULL);
-    mpz_setbit(base, bits);
-    mpz_set_ui(aa, 0);
-    for (i = a->data.zz_poly.length; i-- > 0;) {
-        mpz_mul_2exp(aa, aa, bits);
-        mpz_add(aa, aa, a->data.zz_poly.coeff[i]);
-    }
-    mpz_set_ui(bb, 0);
-    for (i = b->data.zz_poly.length; i-- > 0;) {
-        mpz_mul_2exp(bb, bb, bits);
-        mpz_add(bb, bb, b->data.zz_poly.coeff[i]);
-    }
+    sa = sc_zz_poly_ks_sign(a);
+    sb = sc_zz_poly_ks_sign(b);
+    mpz_inits(aa, bb, cc, NULL);
+    sc_zz_poly_ks_pack(aa, a, bits, sa);
+    sc_zz_poly_ks_pack(bb, b, bits, sb);
     mpz_mul(cc, aa, bb);
-    for (i = 0; i < n; i++) {
-        mpz_fdiv_r_2exp(t, cc, bits);
-        if (mpz_tstbit(t, bits - 1))
-            mpz_sub(t, t, base);
-        mpz_set(r->data.zz_poly.coeff[i], t);
-        mpz_sub(cc, cc, t);
-        mpz_fdiv_q_2exp(cc, cc, bits);
-    }
-    mpz_clears(aa, bb, cc, t, base, NULL);
+    sc_zz_poly_ks_unpack(r, cc, bits, sa * sb);
+    mpz_clears(aa, bb, cc, NULL);
     return r;
 }
 
