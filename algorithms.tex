@@ -556,11 +556,174 @@ Input $f,g\in\ZZ[x]$.
 \end{enumerate}
 \end{algorithm}
 
-The use of $B=2^k$ makes packing, centered residue extraction and division by
-$B$ bit-shift operations.  Standard Kronecker substitution and refinements are
-discussed by Harvey \cite{Harvey2009}; in particular, that paper emphasizes
-the reduction of polynomial multiplication to highly optimized integer
-multiplication.
+\subsubsection{Linear packing and unpacking}
+
+The algebraic description above leaves an important implementation question:
+how should the base-$B$ digits actually be assembled into, and recovered from,
+the large integer?  Since $B=2^k$, the answer should be a direct bit layout,
+not repeated arithmetic on an integer that grows one digit at a time.  This
+distinction does not change the Kronecker identity, but it is necessary for the
+stated bit complexity to describe the implementation.
+
+We first convert signed coefficients to ordinary unsigned radix-$B$ digits.
+Suppose $a_0,\ldots,a_{n-1}$ are not all zero and $|a_i|<B$.  Let
+$\sigma\in\{1,-1\}$ be the sign of the highest nonzero coefficient and put
+$\widetilde a_i=\sigma a_i$.  Thus the highest nonzero
+$\widetilde a_i$ is positive.  Starting with a borrow $e_0=0$, define
+\begin{equation}\label{eq:ks-pack-borrow}
+ t_i=\widetilde a_i-e_i,\qquad
+ e_{i+1}=\begin{cases}1,&t_i<0,\\0,&t_i\geq0,\end{cases}
+ \qquad
+ q_i=t_i+e_{i+1}B.
+\end{equation}
+Then $0\leq q_i<B$.  The $q_i$ are ordinary binary digits of the nonnegative
+integer $\sigma f(B)$ in radix $B$.
+
+\begin{algorithm}[Linear limb packing]\label{alg:ks-linear-pack}
+Input coefficients $a_0,\ldots,a_{n-1}$ and $B=2^k$.
+\begin{enumerate}
+ \item Find the sign $\sigma$ of the highest nonzero coefficient.
+ \item Compute the unsigned digits $q_i$ from
+       \eqref{eq:ks-pack-borrow}.
+ \item Let $w$ be the usable number of bits in one machine limb and allocate
+       $\lceil nk/w\rceil$ zero limbs.
+ \item For $i=0,\ldots,n-1$, copy the binary expansion of $q_i$ into the
+       fixed bit interval
+       \[
+          [ik,(i+1)k)
+       \]
+       of the limb array.  At a limb boundary, split the copied word between
+       the two adjacent limbs.
+ \item Interpret the resulting limb array as the nonnegative integer
+       $A=\sigma f(B)$ and retain $\sigma$ separately.
+\end{enumerate}
+\end{algorithm}
+
+The direct layout is possible because the digit windows are disjoint.  No
+partial packed integer is ever shifted; each destination bit is written only a
+bounded number of times.
+
+For unpacking, let $Z\geq0$ be the packed integer after multiplication and let
+$\sigma$ be the product of the two saved signs.  Directly extract
+\begin{equation}\label{eq:ks-raw-digit}
+ q_i=\left\lfloor Z/2^{ik}\right\rfloor\bmod 2^k
+\end{equation}
+by reading the limb window that intersects $[ik,(i+1)k)$.  The $q_i$ are
+ordinary radix digits, whereas the polynomial coefficients are centered
+radix digits.  They are converted with a single carry.  Put $e_0=0$.  Given
+$q_i$ and $e_i$, first form $t_i=q_i+e_i$.  If $t_i\geq B$, subtract $B$ and
+remember a carry.  Then set
+\begin{equation}\label{eq:ks-unpack-carry}
+ d_i=\begin{cases}
+       t_i-B,&t_i\geq B/2,\\
+       t_i,&t_i<B/2,
+     \end{cases}
+\end{equation}
+and let $e_{i+1}=1$ exactly when either the preceding addition wrapped through
+$B$ or the centered choice in \eqref{eq:ks-unpack-carry} subtracted $B$.
+The required coefficient is $c_i=\sigma d_i$.
+
+\begin{algorithm}[Linear limb unpacking]\label{alg:ks-linear-unpack}
+Input the nonnegative packed product $Z$, its saved sign $\sigma$, the digit
+width $k$, and the required number of coefficients $r$.
+\begin{enumerate}
+ \item Set the carry $e_0\leftarrow0$.
+ \item For $i=0,\ldots,r-1$:
+ \begin{enumerate}
+  \item read the $k$-bit window $[ik,(i+1)k)$ directly from the limb array to
+        obtain $q_i$ as in \eqref{eq:ks-raw-digit};
+  \item add the carry $e_i$, reduce modulo $B$ if this addition reaches $B$,
+        and convert the result to the centered interval $[-B/2,B/2)$ using
+        \eqref{eq:ks-unpack-carry};
+  \item record the resulting wrap/centering carry as $e_{i+1}$ and output
+        $c_i=\sigma d_i$.
+ \end{enumerate}
+\end{enumerate}
+\end{algorithm}
+
+\begin{lemma}\label{lem:ks-linear-pack-correct}
+Algorithm~\ref{alg:ks-linear-pack} constructs $A=\sigma f(B)$.  Conversely,
+if the centered coefficients of a polynomial $h$ satisfy $|c_i|<B/2$ and
+$\sigma$ is the sign of its highest nonzero coefficient, then
+Algorithm~\ref{alg:ks-linear-unpack} applied to $Z=\sigma h(B)$ recovers all
+$c_i$.
+\end{lemma}
+
+\begin{proof}
+For packing, equation~\eqref{eq:ks-pack-borrow} is equivalent to
+\[
+ q_i=\widetilde a_i-e_i+e_{i+1}B.
+\]
+Multiplying by $B^i$ and summing telescopes:
+\[
+ \sum_{i=0}^{n-1}q_iB^i
+ =\sum_{i=0}^{n-1}\widetilde a_iB^i+e_nB^n-e_0.
+\]
+Here $e_0=0$.  Since the highest nonzero $\widetilde a_i$ is positive, any
+incoming borrow is discharged there; the remaining higher zero coefficients
+therefore leave $e_n=0$.  Hence the packed unsigned digits represent exactly
+$\sigma f(B)$.
+
+For unpacking, the ordinary radix digit $q_i$ together with the incoming carry
+satisfies
+\[
+ q_i+e_i=d_i+e_{i+1}B,
+ \qquad -B/2\leq d_i<B/2,
+\]
+including the special case in which $q_i+e_i=B$.  Multiplication by $B^i$ and
+summation again telescopes.  Uniqueness of the centered expansion under the
+strict coefficient bound gives $d_i=\sigma c_i$, and hence the algorithm
+returns $c_i$.
+\end{proof}
+
+\begin{proposition}[Cost of conversion]\label{prop:ks-linear-conversion}
+Let $W=nk$ be the packed input size and let $w$ be the machine-limb width.
+Algorithms~\ref{alg:ks-linear-pack} and \ref{alg:ks-linear-unpack} use
+$O(n+W/w)$ limb operations, including the coefficient reads and writes; the
+digit-width choice guarantees that every coefficient occupies $O(1+k/w)$
+limbs.  In the bit model their cost is $O(W)$.
+
+By contrast, the superficially simple Horner-style packing
+\[
+ A\leftarrow A2^k+a_i
+\]
+performed one coefficient at a time can move $\Theta(n^2k)$ bits in total;
+likewise, unpacking by repeatedly replacing
+$C$ with $\lfloor C/2^k\rfloor$ can move $\Theta(n^2k)$ bits.
+\end{proposition}
+
+\begin{proof}
+A $k$-bit digit intersects $O(1+k/w)$ limbs.  Summed over $n$ disjoint digit
+windows this is $O(n+nk/w)$ limb accesses.  The same estimate holds for direct
+window extraction.
+
+For the Horner layout, after $j$ digits have been packed the partial integer
+has $\Theta(jk)$ bits in the generic case.  Shifting that integer by $k$ bits
+therefore touches $\Theta(jk)$ bits, and
+\[
+ \sum_{j=1}^{n}\Theta(jk)=\Theta(n^2k).
+\]
+Repeated right shifts during unpacking give the same sum in reverse order.
+\end{proof}
+
+\begin{remark}[A performance trap]\label{rem:ks-packing-performance}
+Calling multiplication or division by $2^k$ a ``bit shift'' can conceal its
+true cost.  A shift of a multi-megabit integer is not a constant-time machine
+operation: it must read and write storage proportional to the current integer
+size.  Thus an algorithm may perform only $O(n)$ algebraically trivial radix
+steps yet generate quadratic-scale memory traffic.  When the packed integer
+product itself is computed by a quasi-linear multiplication algorithm, such
+conversion can dominate the multiplication it was meant to feed.  Direct limb
+packing and unpacking are therefore not merely a low-level optimization; they
+are required to realize the bit complexity claimed for Kronecker substitution.
+\end{remark}
+
+The use of $B=2^k$ makes the direct layout possible: digit boundaries are bit
+offsets, so packing and centered residue extraction require only shifts,
+masks and limb copies on bounded windows.  Standard Kronecker substitution and
+refinements are discussed by Harvey \cite{Harvey2009}; in particular, that
+paper emphasizes the reduction of polynomial multiplication to highly
+optimized integer multiplication.
 
 \begin{lemma}\label{lem:ks-bound}
 With $k$ chosen by \eqref{eq:ks-width}, every coefficient $c_r$ of $fg$
