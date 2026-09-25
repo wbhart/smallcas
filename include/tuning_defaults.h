@@ -12,6 +12,7 @@ extern size_t sc_tune_mul_karatsuba_low_bits_cutoff;
 extern size_t sc_tune_mul_ntt_cutoff;
 extern size_t sc_tune_mul_ssa_cutoff;
 extern unsigned sc_tune_ssa_mfa_cutoff_log;
+extern unsigned sc_tune_fft_mfa_base_log;
 extern size_t sc_tune_mullow_dc_cutoff;
 extern size_t sc_tune_mullow_ntt_cutoff;
 extern size_t sc_tune_mullow_ssa_cutoff;
@@ -37,6 +38,9 @@ extern size_t sc_tune_pseudodiv_fast_cutoff;
 extern size_t sc_tune_pseudorem_fast_cutoff;
 extern size_t sc_tune_gcd_subresultant_cutoff;
 extern size_t sc_tune_resultant_subresultant_cutoff;
+extern size_t sc_tune_evaluate_dc_cutoff;
+extern size_t sc_tune_compose_dc_cutoff;
+extern size_t sc_tune_taylor_dc_cutoff;
 extern size_t sc_tune_taylor_conv_cutoff;
 #define SC_MUL_KS_CUTOFF sc_tune_mul_ks_cutoff
 #define SC_MUL_TOOM3_CUTOFF sc_tune_mul_toom3_cutoff
@@ -46,6 +50,7 @@ extern size_t sc_tune_taylor_conv_cutoff;
 #define SC_MUL_NTT_CUTOFF sc_tune_mul_ntt_cutoff
 #define SC_MUL_SSA_CUTOFF sc_tune_mul_ssa_cutoff
 #define SC_SSA_MFA_CUTOFF_LOG sc_tune_ssa_mfa_cutoff_log
+#define SC_FFT_MFA_BASE_LOG sc_tune_fft_mfa_base_log
 #define SC_MULLOW_DC_CUTOFF sc_tune_mullow_dc_cutoff
 #define SC_MULLOW_NTT_CUTOFF sc_tune_mullow_ntt_cutoff
 #define SC_MULLOW_SSA_CUTOFF sc_tune_mullow_ssa_cutoff
@@ -71,6 +76,9 @@ extern size_t sc_tune_taylor_conv_cutoff;
 #define SC_PSEUDOREM_FAST_CUTOFF sc_tune_pseudorem_fast_cutoff
 #define SC_GCD_SUBRESULTANT_CUTOFF sc_tune_gcd_subresultant_cutoff
 #define SC_RESULTANT_SUBRESULTANT_CUTOFF sc_tune_resultant_subresultant_cutoff
+#define SC_EVALUATE_DC_CUTOFF sc_tune_evaluate_dc_cutoff
+#define SC_COMPOSE_DC_CUTOFF sc_tune_compose_dc_cutoff
+#define SC_TAYLOR_DC_CUTOFF sc_tune_taylor_dc_cutoff
 #define SC_TAYLOR_CONV_CUTOFF sc_tune_taylor_conv_cutoff
 #else
 #ifndef SC_MUL_KS_CUTOFF
@@ -96,13 +104,13 @@ extern size_t sc_tune_taylor_conv_cutoff;
 #define SC_MUL_SSA_CUTOFF ((size_t)180)
 #endif
 #ifndef SC_SSA_MFA_CUTOFF_LOG
-#define SC_SSA_MFA_CUTOFF_LOG ((unsigned)15)
+#define SC_SSA_MFA_CUTOFF_LOG ((unsigned)13)
 #endif
-#endif
-
 #ifndef SC_FFT_MFA_BASE_LOG
 #define SC_FFT_MFA_BASE_LOG ((unsigned)8)
 #endif
+#endif
+
 #ifndef SC_MULLOW_DC_CUTOFF
 #define SC_MULLOW_DC_CUTOFF ((size_t)108)
 #endif
@@ -185,16 +193,16 @@ extern size_t sc_tune_taylor_conv_cutoff;
 #define SC_HGCD_BASE_CUTOFF ((size_t)12)
 #endif
 #ifndef SC_EVALUATE_DC_CUTOFF
-#define SC_EVALUATE_DC_CUTOFF ((size_t)16)
+#define SC_EVALUATE_DC_CUTOFF ((size_t)6144)
 #endif
 #ifndef SC_COMPOSE_DC_CUTOFF
-#define SC_COMPOSE_DC_CUTOFF ((size_t)8)
+#define SC_COMPOSE_DC_CUTOFF ((size_t)168)
 #endif
 #ifndef SC_TAYLOR_DC_CUTOFF
-#define SC_TAYLOR_DC_CUTOFF ((size_t)4096)
+#define SC_TAYLOR_DC_CUTOFF ((size_t)1024)
 #endif
 #ifndef SC_TAYLOR_CONV_CUTOFF
-#define SC_TAYLOR_CONV_CUTOFF ((size_t)3072)
+#define SC_TAYLOR_CONV_CUTOFF ((size_t)1536)
 #endif
 
 #endif

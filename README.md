@@ -44,12 +44,13 @@ is a machine-local overlay, is ignored by Git, and is created automatically with
 overrides if it is missing.  This lets patches add new defaults without overwriting a
 machine's measured values.
 
-`make tune` builds a separate `SC_TUNE` core in which multiplication cutoffs are
+`make tune` builds a separate `SC_TUNE` core in which the dispatch cutoffs are
 writable variables.  Each timing point alternates the two algorithms, uses paired ratios,
 aims for 1% MAD, and brackets the crossover between a 5% loss and a 5% win.  NTT cutoffs
-are measured as requested/shorter length per CRT prime.  MFA is timed at successive
-transform depths on the minimum-size Fermat ring allowed by SSA, using a
-forward-plus-inverse round trip; if no 5% MFA win is found through depth 15 it is disabled.
+are measured as requested/shorter length per CRT prime.  For SSA, the MFA recursion base
+is chosen from depths 6--8 using round trips at transform depths 13 and 15; the radix-2/MFA
+crossover is then timed at successive depths on the minimum-size Fermat ring allowed by
+SSA.  If no 5% MFA win is found through depth 15 it is disabled.
 
 The tuner covers the full-product chain, the mullo classical/DC and full-FFT
 crossovers, independent mulhi full-FFT crossovers, and the balanced middle-product chain
@@ -76,6 +77,10 @@ case before Brown's PRS, using the Sylvester order `deg(A)+deg(B)` as its metric
 PRS itself needs no additional crossover: each pseudo-remainder already uses the tuned
 pseudo-remainder dispatcher.  XGCD has no separate top-level crossover: its subresultant
 certificate algorithm already inherits tuned pseudo-division and polynomial multiplication.
+Evaluation and composition additionally tune their Horner/divide-and-conquer crossovers.
+Taylor shift separately tunes the specialised Horner/divide-and-conquer fallback used in
+phases where convolution is rejected, before tuning the phase-aware convolution threshold.
+All three searches use small fixed sets of candidate sizes.
 
 Only after every tuning stage succeeds does the tuner atomically replace
 `include/tuning.h`.  Subsequent source patches therefore change `tuning_defaults.h`, not
@@ -111,9 +116,8 @@ smallcas> f(10)
 ```
 
 The normal evaluator dispatches between Horner evaluation and a divide-and-conquer
-algorithm. The current untuned cutoff uses Horner for fewer than 16 coefficients (and
-for arguments 0, 1 or -1), otherwise divide-and-conquer. The algorithms can also be
-called explicitly:
+algorithm. `make tune` measures a conservative crossover at the smallest nontrivial argument,
+`x=2`; arguments 0, 1 and -1 always stay on Horner. The algorithms can also be called explicitly:
 
 ```text
 smallcas> evaluate(f, 10)
@@ -872,7 +876,10 @@ matrix or Brent--Kung machinery is used.
 
 The randomized composition tests compare Horner, divide-and-conquer, and automatic
 dispatch, and independently verify `(f compose g)(a) = f(g(a))` using scalar
-evaluation.
+evaluation. D&C has a strong dyadic phase, so automatic composition only considers it
+in the top eighth of an outer-length dyadic band. `make tune` measures the minimum length
+for that fixed phase rule using a small cubic inner polynomial; all products within either
+path still use the normal tuned multiplication dispatcher.
 
 ## Iteration 27: calculus and basic invariants
 
@@ -975,11 +982,10 @@ uses the existing divide-and-conquer composition engine.  Thus all polynomial
 products continue to pass through the normal multiplication dispatcher, and no matrix
 or rational-polynomial infrastructure is introduced.
 
-Automatic dispatch is deliberately conservative.  A coarse local timing sweep showed
-the generic-composition backend losing to the specialised Horner loop until roughly
-4096 coefficients for small nontrivial shifts, so the current untuned cutoff is 4096;
-shifts by 0, 1, or -1 stay on Horner.  Both algorithms remain directly callable for
-testing and future tuning.
+Automatic dispatch retains both lower algorithms because the convolution path is
+deliberately rejected in unfavourable dyadic phases. `make tune` therefore also measures
+the specialised Horner/divide-and-conquer crossover at power-of-two lengths; shifts by
+0, 1, or -1 stay on Horner. Both algorithms remain directly callable for testing.
 
 `tests/taylor_shift.c` checks a fixed expansion, randomized agreement of Horner,
 divide-and-conquer, automatic dispatch and ordinary composition with `x + c`, plus
@@ -1383,3 +1389,24 @@ worth enabling it.  It benchmarks `n = 3P/4` for `P = 512, 1024, 2048, 4096`, us
 new stage has four bounded candidate points and cannot grow into an open-ended search.
 If no win is found through `n = 3072`, automatic convolution is disabled; the named
 `taylor_shift_conv` operation remains available.
+
+
+## Iteration 61: final balanced-dispatch tuning cleanup
+
+`make tune` now covers the remaining production `ZZ[x]` dispatch constants that do not
+belong to the deferred unbalanced algorithms. Integer evaluation tunes Horner against
+divide-and-conquer on six bounded power-of-two sizes through 8192 using `x=2`, so the
+single size cutoff is conservative for small evaluation arguments. Composition uses
+four bounded `n=7P/8` phase points through outer length 448 with a small cubic inner
+polynomial, while runtime D&C is restricted to the top eighth of each dyadic band. Taylor
+shift tunes its Horner/divide-and-conquer fallback on dyadic endpoints through 8192 before
+running the existing four-point phase-aware convolution search. If evaluation or
+composition has not crossed over by its ceiling, the generated cutoff is placed just above
+the tested range rather than retaining an already-disproved small cutoff.
+
+SSA also tunes the MFA recursion base. Only base depths 6, 7 and 8 are considered, using
+the geometric mean of paired round-trip ratios at transform depths 13 and 15; a smaller
+base replaces the current best only for a measured 1% improvement. The resulting base is
+installed before the existing radix-2/MFA crossover search. No NTT MFA tuning is added.
+The experimental HGCD base and the general/unbalanced middle-product cutoff remain
+untuned pending the planned unbalanced algorithm work.

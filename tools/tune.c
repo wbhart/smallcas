@@ -352,6 +352,99 @@ static double fft_ratio(fft_case *c, double *relmad)
     return med;
 }
 
+static double fft_base_pair_sample(fft_case *c, unsigned old_base,
+                                   unsigned new_base, size_t reps, int reverse)
+{
+    double ta = 0.0, tb = 0.0;
+
+    for (size_t i = 0; i < reps; i++) {
+        double t;
+
+        if ((i ^ (size_t)reverse) & 1) {
+            sc_tune_fft_mfa_base_log = new_base;
+            t = now(), fft_roundtrip(c, 1), tb += now() - t;
+            sc_tune_fft_mfa_base_log = old_base;
+            t = now(), fft_roundtrip(c, 1), ta += now() - t;
+        } else {
+            sc_tune_fft_mfa_base_log = old_base;
+            t = now(), fft_roundtrip(c, 1), ta += now() - t;
+            sc_tune_fft_mfa_base_log = new_base;
+            t = now(), fft_roundtrip(c, 1), tb += now() - t;
+        }
+    }
+    return tb / ta;
+}
+
+static double fft_base_ratio(fft_case *c, unsigned old_base,
+                             unsigned new_base, double *relmad)
+{
+    double v[9], d[9], ta, tb, med;
+    size_t reps = 1, ns = 0;
+
+    while (reps < 1024) {
+        sc_tune_fft_mfa_base_log = old_base;
+        ta = fft_run(c, 1, reps);
+        sc_tune_fft_mfa_base_log = new_base;
+        tb = fft_run(c, 1, reps);
+        if (ta + tb >= 0.010)
+            break;
+        reps <<= 1;
+    }
+    for (ns = 0; ns < 9; ns++) {
+        v[ns] = fft_base_pair_sample(c, old_base, new_base, reps,
+                                     (int)(ns & 1));
+        if (ns >= 4) {
+            double q[9];
+
+            for (size_t i = 0; i <= ns; i++)
+                q[i] = v[i];
+            med = median(q, ns + 1);
+            for (size_t i = 0; i <= ns; i++)
+                d[i] = fabs(v[i] - med);
+            *relmad = median(d, ns + 1) / med;
+            if (*relmad <= 0.01)
+                return med;
+        }
+    }
+    med = median(v, ns);
+    for (size_t i = 0; i < ns; i++)
+        d[i] = fabs(v[i] - med);
+    *relmad = median(d, ns) / med;
+    return med;
+}
+
+static unsigned tune_mfa_base(void)
+{
+    fft_case c13, c15;
+    unsigned best = 8;
+
+    puts("\nSSA MFA leaf size: compare base depths 6, 7 and 8 at logN=13,15.");
+    if (!fft_case_init(&c13, 13) || !fft_case_init(&c15, 15)) {
+        fprintf(stderr, "out of memory while tuning MFA leaf size\n");
+        exit(1);
+    }
+    sc_tune_fft_mfa_base_log = best;
+    for (unsigned cand = 7; cand >= 6; cand--) {
+        double mad13 = 0.0, mad15 = 0.0;
+        double q13 = fft_base_ratio(&c13, best, cand, &mad13);
+        double q15 = fft_base_ratio(&c15, best, cand, &mad15);
+        double q = sqrt(q13 * q15);
+
+        printf("  base=%u vs %u: log13=%7.4f log15=%7.4f gm=%7.4f "
+               "MAD=%4.1f%%/%4.1f%%\n",
+               cand, best, q13, q15, q, 100.0 * mad13, 100.0 * mad15);
+        if (q <= 0.99)
+            best = cand;
+        if (cand == 6)
+            break;
+    }
+    fft_case_clear(&c15);
+    fft_case_clear(&c13);
+    sc_tune_fft_mfa_base_log = best;
+    printf("  selected SSA MFA base depth %u\n", best);
+    return best;
+}
+
 static unsigned tune_mfa(void)
 {
     unsigned loss = 0, win = 0, cut = UINT_MAX;
@@ -390,14 +483,15 @@ static unsigned tune_mfa(void)
 static int write_tuning(const tune_result *ks, const tune_result *toom,
                         const tune_result *kar, const tune_result *low,
                         const tune_result *ntt, size_t ntt_cut,
-                        const tune_result *ssa, unsigned mfa_cut,
+                        const tune_result *ssa, unsigned mfa_base, unsigned mfa_cut,
                         const tune_result *lowdc, size_t low_ntt, size_t low_ssa,
                         size_t high_ntt, size_t high_ssa,
                         const tune_result *midclass, const tune_result *mid63,
                         size_t mid_ntt, size_t mid_ssa,
                         const division_tuning *div, const gcd_tuning *gcd,
                         const resultant_tuning *resultant,
-                        const tune_result *taylor)
+                        const tune_result *evaluate, const tune_result *compose,
+                        const tune_result *taylor_dc, const tune_result *taylor)
 {
     const char *tmp = "include/tuning.h.tmp";
     const char *dst = "include/tuning.h";
@@ -424,6 +518,7 @@ static int write_tuning(const tune_result *ks, const tune_result *toom,
         fputs("#define SC_MUL_SSA_CUTOFF ((size_t)-1)\n", f);
     else
         fprintf(f, "#define SC_MUL_SSA_CUTOFF ((size_t)%zu)\n", ssa->cut);
+    fprintf(f, "#define SC_FFT_MFA_BASE_LOG ((unsigned)%u)\n", mfa_base);
     if (mfa_cut == UINT_MAX)
         fputs("#define SC_SSA_MFA_CUTOFF_LOG ((unsigned)-1)\n", f);
     else
@@ -459,6 +554,9 @@ static int write_tuning(const tune_result *ks, const tune_result *toom,
     WRITE_CUTOFF("SC_PSEUDOREM_FAST_CUTOFF", div->pseudorem_fast.cut);
     WRITE_CUTOFF("SC_GCD_SUBRESULTANT_CUTOFF", gcd->subresultant.cut);
     WRITE_CUTOFF("SC_RESULTANT_SUBRESULTANT_CUTOFF", resultant->subresultant.cut);
+    WRITE_CUTOFF("SC_EVALUATE_DC_CUTOFF", evaluate->cut);
+    WRITE_CUTOFF("SC_COMPOSE_DC_CUTOFF", compose->cut);
+    WRITE_CUTOFF("SC_TAYLOR_DC_CUTOFF", taylor_dc->cut);
     WRITE_CUTOFF("SC_TAYLOR_CONV_CUTOFF", taylor->cut);
 #undef WRITE_CUTOFF
     fputs("#endif\n\n#include \"tuning_defaults.h\"\n\n#endif\n", f);
@@ -1298,6 +1396,160 @@ static resultant_tuning tune_resultant(sc_context *ctx, sc_parent *r,
     return rt;
 }
 
+static tune_result tune_evaluate(sc_context *ctx, sc_parent *r,
+                                 gmp_randstate_t state)
+{
+    static const size_t sizes[] = { 256, 512, 1024, 2048, 4096, 8192 };
+    tune_result tr = { 0, 0, 8193, 0.0, 0.0 };
+    sc_value *x = sc_value_new_zz_checked(ctx);
+
+    if (x == NULL) {
+        fprintf(stderr, "out of memory while tuning evaluation\n");
+        exit(1);
+    }
+    mpz_set_ui(x->data.z, 2);
+    puts("\nEvaluation: Horner -> divide-and-conquer (64-bit coefficients, x=2).");
+    puts("  conservative six-point bounded search through 8192 coefficients.");
+    for (size_t i = 0; i < sizeof(sizes) / sizeof(sizes[0]); i++) {
+        size_t n = sizes[i];
+        sc_value *a = random_poly(ctx, r, n, 64, state);
+        double mad = 0.0, q;
+
+        if (a == NULL) {
+            fprintf(stderr, "out of memory while tuning evaluation\n");
+            exit(1);
+        }
+        q = ratio_bounded(ctx, sc_zz_poly_evaluate_horner,
+                          sc_zz_poly_evaluate_divconquer, a, x, &mad);
+        printf("  n=%-4zu DC/Horner=%7.4f  MAD=%5.2f%%\n",
+               n, q, 100.0 * mad);
+        sc_value_free(a);
+        if (q >= 1.05) {
+            tr.loss = n;
+            tr.loss_ratio = q;
+        } else if (q <= 0.95) {
+            tr.win = n;
+            tr.win_ratio = q;
+            tr.cut = tr.loss ? tr.loss + (n - tr.loss) / 2 : n;
+            break;
+        }
+    }
+    if (tr.win == 0)
+        puts("  no 5% win through n=8192; using D&C only above the tested range");
+    else
+        printf("  5%% bracket [%zu, %zu], midpoint %zu\n",
+               tr.loss, tr.win, tr.cut);
+    sc_tune_evaluate_dc_cutoff = tr.cut;
+    sc_value_free(x);
+    return tr;
+}
+
+static tune_result tune_compose(sc_context *ctx, sc_parent *r,
+                                gmp_randstate_t state)
+{
+    static const size_t sizes[] = { 56, 112, 224, 448 };
+    tune_result tr = { 0, 0, 449, 0.0, 0.0 };
+    size_t streak = 0, first_win = 0;
+
+    puts("\nComposition: Horner -> divide-and-conquer in the top eighth of a dyadic band.");
+    puts("  Outer 32-bit coefficients, cubic inner polynomial with 16-bit coefficients;");
+    puts("  four bounded phase points n=7P/8 for P=64,128,256,512.");
+    for (size_t i = 0; i < sizeof(sizes) / sizeof(sizes[0]); i++) {
+        size_t n = sizes[i];
+        sc_value *a = random_poly(ctx, r, n, 32, state);
+        sc_value *b = random_poly(ctx, r, 4, 16, state);
+        double mad = 0.0, q;
+
+        if (a == NULL || b == NULL) {
+            fprintf(stderr, "out of memory while tuning composition\n");
+            exit(1);
+        }
+        q = ratio_bounded(ctx, sc_zz_poly_compose_horner,
+                          sc_zz_poly_compose_divconquer, a, b, &mad);
+        printf("  n=%-3zu DC/Horner=%7.4f  MAD=%5.2f%%\n",
+               n, q, 100.0 * mad);
+        sc_value_free_many(2, a, b);
+        if (q >= 1.05) {
+            tr.loss = n;
+            tr.loss_ratio = q;
+            streak = 0;
+        } else if (q <= 0.95) {
+            if (streak++ == 0)
+                first_win = n;
+            if (streak >= 2) {
+                tr.win = first_win;
+                tr.win_ratio = q;
+                tr.cut = tr.loss ? tr.loss + (first_win - tr.loss) / 2 : first_win;
+                break;
+            }
+        } else
+            streak = 0;
+    }
+    if (tr.win == 0)
+        puts("  no sustained 5% win through n=448; using D&C only above the tested range");
+    else
+        printf("  sustained 5%% bracket [%zu, %zu], midpoint %zu\n",
+               tr.loss, tr.win, tr.cut);
+    sc_tune_compose_dc_cutoff = tr.cut;
+    return tr;
+}
+
+static tune_result tune_taylor_dc(sc_context *ctx, sc_parent *r,
+                                   gmp_randstate_t state)
+{
+    static const size_t sizes[] = { 512, 1024, 2048, 4096, 8192 };
+    tune_result tr = { 0, 0, 8193, 0.0, 0.0 };
+    sc_value *c = sc_value_new_zz_checked(ctx);
+    size_t streak = 0, first_win = 0;
+
+    if (c == NULL) {
+        fprintf(stderr, "out of memory while tuning Taylor D&C\n");
+        exit(1);
+    }
+    mpz_set_ui(c->data.z, 10);
+    puts("\nTaylor fallback: specialised Horner -> divide-and-conquer.");
+    puts("  Test dyadic endpoints where convolution is deliberately avoided;");
+    puts("  bounded search through n=8192 (32-bit coefficients, shift 10); require two wins.");
+    for (size_t i = 0; i < sizeof(sizes) / sizeof(sizes[0]); i++) {
+        size_t n = sizes[i];
+        sc_value *a = random_poly(ctx, r, n, 32, state);
+        double mad = 0.0, q;
+
+        if (a == NULL) {
+            fprintf(stderr, "out of memory while tuning Taylor D&C\n");
+            exit(1);
+        }
+        q = ratio_bounded(ctx, sc_zz_poly_taylor_shift_horner,
+                          sc_zz_poly_taylor_shift_divconquer, a, c, &mad);
+        printf("  n=%-4zu DC/Horner=%7.4f  MAD=%5.2f%%\n",
+               n, q, 100.0 * mad);
+        sc_value_free(a);
+        if (q >= 1.05) {
+            tr.loss = n;
+            tr.loss_ratio = q;
+            streak = 0;
+        } else if (q <= 0.95) {
+            if (streak++ == 0)
+                first_win = n;
+            if (streak >= 2) {
+                tr.win = first_win;
+                tr.win_ratio = q;
+                tr.cut = tr.loss ? tr.loss + (first_win - tr.loss) / 2 : first_win;
+                break;
+            }
+        } else
+            streak = 0;
+    }
+    if (tr.win == 0)
+        puts("  no 5% win through n=8192; using D&C only above the tested range");
+    else
+        printf("  5%% bracket [%zu, %zu], midpoint %zu\n",
+               tr.loss, tr.win, tr.cut);
+    sc_tune_taylor_dc_cutoff = tr.cut;
+    sc_value_free(c);
+    return tr;
+}
+
 static tune_result tune_taylor(sc_context *ctx, sc_parent *r,
                                 gmp_randstate_t state)
 {
@@ -1389,10 +1641,10 @@ int main(void)
     division_tuning div;
     gcd_tuning gcd;
     resultant_tuning resultant;
-    tune_result taylor;
+    tune_result evaluate, compose, taylor_dc, taylor;
     size_t ntt_cut, toom_fallback, low_ntt_cut, low_ssa_cut;
     size_t high_ntt_cut, high_ssa_cut, mid_ntt_cut, mid_ssa_cut, mid63_lo;
-    unsigned mfa_cut;
+    unsigned mfa_base, mfa_cut;
 
     sc_context_init(&ctx);
     gmp_randinit_default(state);
@@ -1423,6 +1675,7 @@ int main(void)
     ntt = tune_pair(&ctx, &r, state, "lower dispatcher -> CRT-NTT (48-bit coefficients)",
                     sc_zz_poly_mul, sc_zz_poly_mul_ntt, 48, 0, 96, 16384, (size_t)-1);
     ntt_cut = ntt_cutoff_full(&ctx, &r, state, &ntt);
+    mfa_base = tune_mfa_base();
     mfa_cut = tune_mfa();
     sc_tune_ssa_mfa_cutoff_log = mfa_cut;
     ssa = tune_pair(&ctx, &r, state, "lower dispatcher -> SSA (bits = length)",
@@ -1493,12 +1746,15 @@ int main(void)
     div = tune_division(&ctx, &r, state);
     gcd = tune_gcd(&ctx, &r, state);
     resultant = tune_resultant(&ctx, &r, state);
+    evaluate = tune_evaluate(&ctx, &r, state);
+    compose = tune_compose(&ctx, &r, state);
+    taylor_dc = tune_taylor_dc(&ctx, &r, state);
     taylor = tune_taylor(&ctx, &r, state);
 
-    if (!write_tuning(&ks, &toom, &kar, &low, &ntt, ntt_cut, &ssa, mfa_cut,
+    if (!write_tuning(&ks, &toom, &kar, &low, &ntt, ntt_cut, &ssa, mfa_base, mfa_cut,
                       &lowdc, low_ntt_cut, low_ssa_cut, high_ntt_cut, high_ssa_cut,
                       &midclass, &mid63, mid_ntt_cut, mid_ssa_cut, &div, &gcd,
-                      &resultant, &taylor)) {
+                      &resultant, &evaluate, &compose, &taylor_dc, &taylor)) {
         gmp_randclear(state);
         sc_context_clear(&ctx);
         return 1;

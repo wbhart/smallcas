@@ -746,12 +746,22 @@ sc_value *sc_zz_poly_compose_divconquer(sc_context *ctx, const sc_value *a,
     return sc_zz_poly_compose_divconquer_impl(ctx, a, b);
 }
 
+static int sc_zz_poly_compose_dc_phase(size_t n)
+{
+    size_t p = 1;
+
+    while (p < n && p <= SIZE_MAX / 2)
+        p <<= 1;
+    return n >= p - p / 8;
+}
+
 sc_value *sc_zz_poly_compose(sc_context *ctx, const sc_value *a, const sc_value *b)
 {
     if (a == NULL || b == NULL)
         return NULL;
     if (a->data.zz_poly.length < SC_COMPOSE_DC_CUTOFF ||
-        b->data.zz_poly.length <= 1)
+        b->data.zz_poly.length <= 1 ||
+        !sc_zz_poly_compose_dc_phase(a->data.zz_poly.length))
         return sc_zz_poly_compose_horner_impl(ctx, a, b);
     return sc_zz_poly_compose_divconquer_impl(ctx, a, b);
 }
