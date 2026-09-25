@@ -171,6 +171,31 @@ sc_value *sc_zz_poly_mul_classical(sc_context *ctx,
     return r;
 }
 
+sc_value *sc_zz_poly_sqr_classical(sc_context *ctx, const sc_value *a)
+{
+    size_t n = a->data.zz_poly.length, i, j;
+    sc_value *r;
+    mpz_t t;
+
+    if (n == 0)
+        return sc_value_new_zz_poly_checked(ctx, a->parent, 0);
+    r = sc_value_new_zz_poly_checked(ctx, a->parent, 2 * n - 1);
+    if (r == NULL)
+        return NULL;
+    mpz_init(t);
+    for (i = 0; i < n; i++) {
+        mpz_mul(t, SC_ZP(a, i), SC_ZP(a, i));
+        mpz_add(SC_ZP(r, 2 * i), SC_ZP(r, 2 * i), t);
+        for (j = i + 1; j < n; j++) {
+            mpz_mul(t, SC_ZP(a, i), SC_ZP(a, j));
+            mpz_mul_2exp(t, t, 1);
+            mpz_add(SC_ZP(r, i + j), SC_ZP(r, i + j), t);
+        }
+    }
+    mpz_clear(t);
+    return r;
+}
+
 sc_value *sc_zz_poly_mullow_classical(sc_context *ctx, const sc_value *a,
                                       const sc_value *b, size_t n)
 {
@@ -529,6 +554,25 @@ sc_value *sc_zz_poly_mul_ks(sc_context *ctx, const sc_value *a, const sc_value *
     return r;
 }
 
+sc_value *sc_zz_poly_sqr_ks(sc_context *ctx, const sc_value *a,
+                            mp_bitcnt_t bits)
+{
+    size_t n = a->data.zz_poly.length == 0 ? 0 : 2 * a->data.zz_poly.length - 1;
+    sc_value *r = sc_value_new_zz_poly_checked(ctx, a->parent, n);
+    int sa;
+    mpz_t aa, cc;
+
+    if (r == NULL || n == 0)
+        return r;
+    sa = sc_zz_poly_ks_sign(a);
+    mpz_inits(aa, cc, NULL);
+    sc_zz_poly_ks_pack(aa, a, bits, sa);
+    mpz_mul(cc, aa, aa);
+    sc_zz_poly_ks_unpack(r, cc, bits, 1);
+    mpz_clears(aa, cc, NULL);
+    return r;
+}
+
 sc_value *sc_zz_poly_mul_karatsuba(sc_context *ctx, const sc_value *a, const sc_value *b)
 {
     size_t an = a->data.zz_poly.length, bn = b->data.zz_poly.length;
@@ -561,6 +605,33 @@ sc_value *sc_zz_poly_mul_karatsuba(sc_context *ctx, const sc_value *a, const sc_
         SC_MPZ_ADDEQ(rp->coeff[i + 2 * k], z2->data.zz_poly.coeff[i]);
 
     sc_value_free_many(5, s, t, z0, z1, z2);
+    return r;
+}
+
+sc_value *sc_zz_poly_sqr_karatsuba(sc_context *ctx, const sc_value *a)
+{
+    size_t an = a->data.zz_poly.length, k = an / 2, i, n = 2 * an - 1;
+    sc_value a0 = sc_zz_poly_view(a, 0, k);
+    sc_value a1 = sc_zz_poly_view(a, k, an - k);
+    sc_value *s = sc_zz_poly_add(ctx, &a0, &a1);
+    sc_value *z0 = sc_zz_poly_sqr(ctx, &a0);
+    sc_value *z2 = sc_zz_poly_sqr(ctx, &a1);
+    sc_value *z1 = s ? sc_zz_poly_sqr(ctx, s) : NULL;
+    sc_value *r = sc_value_new_zz_poly_checked(ctx, a->parent, n);
+
+    if (s == NULL || z0 == NULL || z1 == NULL || z2 == NULL || r == NULL)
+        return sc_value_free_many_null(5, s, z0, z1, z2, r);
+    for (i = 0; i < SC_ZN(z0); i++)
+        SC_MPZ_ADDEQ(SC_ZP(r, i), SC_ZP(z0, i));
+    for (i = 0; i < SC_ZN(z1); i++)
+        SC_MPZ_ADDEQ(SC_ZP(r, i + k), SC_ZP(z1, i));
+    for (i = 0; i < SC_ZN(z0); i++)
+        SC_MPZ_SUBEQ(SC_ZP(r, i + k), SC_ZP(z0, i));
+    for (i = 0; i < SC_ZN(z2); i++)
+        SC_MPZ_SUBEQ(SC_ZP(r, i + k), SC_ZP(z2, i));
+    for (i = 0; i < SC_ZN(z2); i++)
+        SC_MPZ_ADDEQ(SC_ZP(r, i + 2 * k), SC_ZP(z2, i));
+    sc_value_free_many(4, s, z0, z1, z2);
     return r;
 }
 
@@ -603,6 +674,87 @@ sc_value *sc_zz_poly_mul_toom3(sc_context *ctx, sc_zz_poly_toom3_ws *w)
     return sc_zz_poly_toom3_ws_finish(w);
 }
 
+static void sc_zz_poly_sqr_toom3_eval(sc_value *point[5], sc_value block[3],
+                                      size_t m, mpz_srcptr zero)
+{
+    for (size_t i = 0; i < m; i++) {
+        mpz_srcptr a0 = SC_ZP_COEFF(&block[0], i, zero);
+        mpz_srcptr a1 = SC_ZP_COEFF(&block[1], i, zero);
+        mpz_srcptr a2 = SC_ZP_COEFF(&block[2], i, zero);
+
+        mpz_add(SC_ZP(point[1], i), a0, a2);
+        mpz_add(SC_ZP(point[1], i), SC_ZP(point[1], i), a1);
+        mpz_add(SC_ZP(point[2], i), a0, a2);
+        mpz_sub(SC_ZP(point[2], i), SC_ZP(point[2], i), a1);
+        mpz_add(SC_ZP(point[3], i), a0, a1);
+        mpz_add(SC_ZP(point[3], i), SC_ZP(point[3], i), a1);
+        mpz_addmul_ui(SC_ZP(point[3], i), a2, 4);
+    }
+}
+
+static void sc_zz_poly_sqr_toom3_interp(sc_value *r, sc_value *prod[5],
+                                        size_t m, size_t q, mpz_srcptr zero)
+{
+    mpz_t t1, t2, t3;
+
+    mpz_inits(t1, t2, t3, NULL);
+    for (size_t i = 0; i < q; i++) {
+        mpz_srcptr p0 = SC_ZP_COEFF(prod[0], i, zero);
+        mpz_srcptr p1 = SC_ZP_COEFF(prod[1], i, zero);
+        mpz_srcptr p2 = SC_ZP_COEFF(prod[2], i, zero);
+        mpz_srcptr p3 = SC_ZP_COEFF(prod[3], i, zero);
+        mpz_srcptr p4 = SC_ZP_COEFF(prod[4], i, zero);
+
+        mpz_sub(t3, p3, p1), mpz_submul_ui(t3, p4, 15);
+        mpz_sub(t1, p1, p2), mpz_fdiv_q_2exp(t1, t1, 1);
+        mpz_sub(t2, p2, p0), mpz_sub(t2, t2, p4), mpz_add(t2, t2, t1);
+        mpz_sub(t3, t3, t1), mpz_submul_ui(t3, t2, 3), mpz_divexact_ui(t3, t3, 6);
+        mpz_sub(t1, t1, t3);
+        if (i < SC_ZN(prod[0])) SC_MPZ_ADDEQ(SC_ZP(r, i), p0);
+        SC_MPZ_ADDEQ(SC_ZP(r, i + m), t1);
+        SC_MPZ_ADDEQ(SC_ZP(r, i + 2 * m), t2);
+        SC_MPZ_ADDEQ(SC_ZP(r, i + 3 * m), t3);
+        if (i < SC_ZN(prod[4])) SC_MPZ_ADDEQ(SC_ZP(r, i + 4 * m), p4);
+    }
+    mpz_clears(t1, t2, t3, NULL);
+}
+
+sc_value *sc_zz_poly_sqr_toom3(sc_context *ctx, const sc_value *a)
+{
+    size_t n = SC_ZN(a), m = (n + 2) / 3, q = 2 * m - 1, j;
+    sc_value block[3], *point[5] = { NULL, NULL, NULL, NULL, NULL };
+    sc_value *prod[5] = { NULL, NULL, NULL, NULL, NULL }, *r = NULL;
+    mpz_t zero;
+
+    for (j = 0; j < 3; j++) block[j] = sc_zz_poly_view(a, j * m, m);
+    point[0] = &block[0], point[4] = &block[2];
+    for (j = 1; j <= 3; j++) {
+        point[j] = sc_value_new_zz_poly_checked(ctx, a->parent, m);
+        if (point[j] == NULL) goto fail;
+    }
+    mpz_init(zero);
+    sc_zz_poly_sqr_toom3_eval(point, block, m, zero);
+    for (j = 0; j < 5; j++) {
+        prod[j] = sc_zz_poly_sqr(ctx, point[j]);
+        if (prod[j] == NULL) goto fail_mpz;
+    }
+    r = sc_value_new_zz_poly_checked(ctx, a->parent, 6 * m - 1);
+    if (r == NULL) goto fail_mpz;
+    sc_zz_poly_sqr_toom3_interp(r, prod, m, q, zero);
+    mpz_clear(zero);
+    sc_zz_poly_truncate(r, 2 * n - 1);
+    for (j = 1; j <= 3; j++) sc_value_free(point[j]);
+    for (j = 0; j < 5; j++) sc_value_free(prod[j]);
+    return r;
+fail_mpz:
+    mpz_clear(zero);
+fail:
+    for (j = 1; j <= 3; j++) sc_value_free(point[j]);
+    for (j = 0; j < 5; j++) sc_value_free(prod[j]);
+    sc_value_free(r);
+    return NULL;
+}
+
 sc_value *sc_zz_poly_pow_binary(sc_context *ctx, const sc_value *a, unsigned long e)
 {
     unsigned long bit = 1;
@@ -620,7 +772,7 @@ sc_value *sc_zz_poly_pow_binary(sc_context *ctx, const sc_value *a, unsigned lon
     while (bit <= e / 2)
         bit <<= 1;
     for (bit >>= 1; bit != 0; bit >>= 1) {
-        t = sc_zz_poly_mul(ctx, r, r);
+        t = sc_zz_poly_sqr(ctx, r);
         sc_value_free(r);
         if (t == NULL)
             return NULL;

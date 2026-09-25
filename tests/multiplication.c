@@ -518,6 +518,54 @@ static int test_recursive_toom63(sc_context *ctx, sc_parent *r)
 }
 
 
+static int test_squaring(sc_context *ctx, sc_parent *r)
+{
+    static const size_t cases[][2] = {
+        { 1, 20 }, { 7, 20 }, { 19, 80 }, { 41, 160 }, { 73, 40 }
+    };
+
+    for (size_t k = 0; k < sizeof(cases) / sizeof(cases[0]); k++) {
+        size_t n = cases[k][0], bits = cases[k][1];
+        sc_value *a = make_ssa_poly(ctx, r, n, bits, (unsigned)(25000 + k));
+        sc_value *want = a ? sc_zz_poly_mul_classical(ctx, a, a) : NULL;
+        sc_value *c = a ? sc_zz_poly_sqr_classical(ctx, a) : NULL;
+        sc_value *ks = a ? sc_zz_poly_sqr_ks(ctx, a, ks_bits(a, a)) : NULL;
+        sc_value *kar = a && n > 1 ? sc_zz_poly_sqr_karatsuba(ctx, a) : NULL;
+        sc_value *toom = a && n >= 3 ? sc_zz_poly_sqr_toom3(ctx, a) : NULL;
+        sc_value *disp = a ? sc_zz_poly_sqr(ctx, a) : NULL;
+        sc_value *alias = a ? sc_zz_poly_mul(ctx, a, a) : NULL;
+        int ok = same_poly(want, c) && same_poly(want, ks) &&
+                 (kar == NULL || same_poly(want, kar)) &&
+                 (toom == NULL || same_poly(want, toom)) &&
+                 same_poly(want, disp) && same_poly(want, alias);
+
+        sc_value_free_many(8, a, want, c, ks, kar, toom, disp, alias);
+        if (!ok)
+            return 0;
+    }
+    {
+        sc_value *a = make_ssa_poly(ctx, r, 48, 48, 26001);
+        sc_value *want = a ? sc_zz_poly_mul_classical(ctx, a, a) : NULL;
+        sc_value *got = a ? sc_zz_poly_sqr_ntt(ctx, a) : NULL;
+        int ok = same_poly(want, got);
+
+        sc_value_free_many(3, a, want, got);
+        if (!ok)
+            return 0;
+    }
+    {
+        sc_value *a = make_ssa_poly(ctx, r, 48, 96, 26002);
+        sc_value *want = a ? sc_zz_poly_mul_classical(ctx, a, a) : NULL;
+        sc_value *got = a ? sc_zz_poly_sqr_ssa(ctx, a) : NULL;
+        int ok = same_poly(want, got);
+
+        sc_value_free_many(3, a, want, got);
+        if (!ok)
+            return 0;
+    }
+    return 1;
+}
+
 static int test_fft_short_dispatch(sc_context *ctx, sc_parent *r)
 {
     static const size_t edge_cases[][2] = { { 180, 180 }, { 2400, 48 } };
@@ -615,6 +663,7 @@ int main(void)
 
     sc_context_init(&ctx);
     if (!test_ssa(&ctx, &r) || !test_ntt(&ctx, &r) ||
+        !test_squaring(&ctx, &r) ||
         !test_power(&ctx, &r) || !test_grid(&ctx, &r) ||
         !test_ks_leading_zeros(&ctx, &r) || !test_dispatch(&ctx, &r) ||
         !test_toom3_dispatch(&ctx, &r) || !test_recursive_toom3(&ctx, &r) ||

@@ -186,6 +186,50 @@ static int sc_ntt_prime_pass(sc_value *r, const sc_value *a, const sc_value *b,
     return 1;
 }
 
+static int sc_ntt_square_prime_pass(sc_value *r, const sc_value *a,
+                                    unsigned logn, size_t pi, mpz_t M,
+                                    mpz_t t, mpz_t u, mp_ptr v, mp_ptr work)
+{
+    const sc_ntt_prime *q = sc_ntt_primes + pi;
+    sc_fft_mod m;
+    sc_fft_plan plan;
+    size_t n = (size_t)1 << logn;
+    mp_limb_t p, inv;
+
+    if (!sc_fft_mod_init(&m, q->c, SC_NTT_DEPTH, q->root, SC_NTT_DEPTH))
+        return 0;
+    if (m.n != 1 || !sc_fft_plan_init(&plan, logn, &m)) {
+        sc_fft_mod_clear(&m);
+        return 0;
+    }
+    p = m.mod[0];
+    inv = sc_ntt_inverse(t, u, M, p);
+    if (inv == 0) {
+        sc_fft_plan_clear(&plan);
+        sc_fft_mod_clear(&m);
+        return 0;
+    }
+    memset(v, 0, n * sizeof(mp_limb_t));
+    for (size_t i = 0; i < a->data.zz_poly.length; i++)
+        v[i] = (mp_limb_t)mpz_fdiv_ui(a->data.zz_poly.coeff[i], (unsigned long)p);
+    if (r->data.zz_poly.length < n)
+        sc_fft_forward_tft(v, a->data.zz_poly.length, r->data.zz_poly.length,
+                           &plan, &m, work);
+    else
+        sc_fft_forward(v, &plan, &m, work);
+    for (size_t i = 0; i < r->data.zz_poly.length; i++)
+        sc_fft_sqr(v + i, v + i, &m, work);
+    if (r->data.zz_poly.length < n)
+        sc_fft_inverse_tft(v, r->data.zz_poly.length, &plan, &m, work);
+    else
+        sc_fft_inverse(v, &plan, &m, work);
+    sc_ntt_crt(r, v, 0, r->data.zz_poly.length, M, p, inv);
+    mpz_mul_ui(M, M, (unsigned long)p);
+    sc_fft_plan_clear(&plan);
+    sc_fft_mod_clear(&m);
+    return 1;
+}
+
 size_t sc_zz_poly_mulmid_ntt_nprimes(const sc_value *a, const sc_value *b, size_t n)
 {
     size_t np;
@@ -244,6 +288,56 @@ fail:
     sc_value_free(r);
     if (ctx->error[0] == '\0')
         sc_set_error(ctx, "out of memory in NTT middle product");
+    return NULL;
+}
+
+sc_value *sc_zz_poly_sqr_ntt(sc_context *ctx, const sc_value *a)
+{
+    size_t an, outn, np, n;
+    unsigned logn;
+    sc_value *r = NULL;
+    mp_ptr v = NULL, work = NULL;
+    mpz_t M, half, t, u;
+
+    if (a == NULL)
+        return NULL;
+    an = a->data.zz_poly.length;
+    if (an == 0)
+        return sc_value_new_zz_poly_checked(ctx, a->parent, 0);
+    if (GMP_NUMB_BITS != 64 || ULONG_MAX < UINT64_MAX ||
+        !sc_ntt_params(&np, &logn, a, a)) {
+        sc_set_error(ctx, "NTT square parameters unsupported");
+        return NULL;
+    }
+    outn = 2 * an - 1;
+    n = (size_t)1 << logn;
+    r = sc_value_new_zz_poly_checked(ctx, a->parent, outn);
+    v = calloc(n, sizeof(mp_limb_t));
+    work = calloc(5, sizeof(mp_limb_t));
+    if (r == NULL || v == NULL || work == NULL)
+        goto fail;
+    mpz_inits(M, half, t, u, NULL);
+    mpz_set_ui(M, 1);
+    for (size_t i = 0; i < np; i++)
+        if (!sc_ntt_square_prime_pass(r, a, logn, i, M, t, u, v, work))
+            goto fail_mpz;
+    mpz_fdiv_q_2exp(half, M, 1);
+    for (size_t i = 0; i < outn; i++)
+        if (mpz_cmp(r->data.zz_poly.coeff[i], half) > 0)
+            mpz_sub(r->data.zz_poly.coeff[i], r->data.zz_poly.coeff[i], M);
+    mpz_clears(M, half, t, u, NULL);
+    free(work);
+    free(v);
+    sc_zz_poly_normalize(r);
+    return r;
+fail_mpz:
+    mpz_clears(M, half, t, u, NULL);
+fail:
+    free(work);
+    free(v);
+    sc_value_free(r);
+    if (ctx->error[0] == '\0')
+        sc_set_error(ctx, "out of memory in NTT squaring");
     return NULL;
 }
 

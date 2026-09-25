@@ -11,6 +11,11 @@ extern size_t sc_tune_mul_karatsuba_low_bits;
 extern size_t sc_tune_mul_karatsuba_low_bits_cutoff;
 extern size_t sc_tune_mul_ntt_cutoff;
 extern size_t sc_tune_mul_ssa_cutoff;
+extern size_t sc_tune_sqr_ks_cutoff;
+extern size_t sc_tune_sqr_toom3_cutoff;
+extern size_t sc_tune_sqr_karatsuba_cutoff;
+extern size_t sc_tune_sqr_ntt_cutoff;
+extern size_t sc_tune_sqr_ssa_cutoff;
 extern unsigned sc_tune_ssa_mfa_cutoff_log;
 extern unsigned sc_tune_fft_mfa_base_log;
 extern size_t sc_tune_mullow_dc_cutoff;
@@ -49,6 +54,11 @@ extern size_t sc_tune_taylor_conv_cutoff;
 #define SC_MUL_KARATSUBA_LOW_BITS_CUTOFF sc_tune_mul_karatsuba_low_bits_cutoff
 #define SC_MUL_NTT_CUTOFF sc_tune_mul_ntt_cutoff
 #define SC_MUL_SSA_CUTOFF sc_tune_mul_ssa_cutoff
+#define SC_SQR_KS_CUTOFF sc_tune_sqr_ks_cutoff
+#define SC_SQR_TOOM3_CUTOFF sc_tune_sqr_toom3_cutoff
+#define SC_SQR_KARATSUBA_CUTOFF sc_tune_sqr_karatsuba_cutoff
+#define SC_SQR_NTT_CUTOFF sc_tune_sqr_ntt_cutoff
+#define SC_SQR_SSA_CUTOFF sc_tune_sqr_ssa_cutoff
 #define SC_SSA_MFA_CUTOFF_LOG sc_tune_ssa_mfa_cutoff_log
 #define SC_FFT_MFA_BASE_LOG sc_tune_fft_mfa_base_log
 #define SC_MULLOW_DC_CUTOFF sc_tune_mullow_dc_cutoff
@@ -102,6 +112,21 @@ extern size_t sc_tune_taylor_conv_cutoff;
 #endif
 #ifndef SC_MUL_SSA_CUTOFF
 #define SC_MUL_SSA_CUTOFF ((size_t)180)
+#endif
+#ifndef SC_SQR_KS_CUTOFF
+#define SC_SQR_KS_CUTOFF ((size_t)10)
+#endif
+#ifndef SC_SQR_TOOM3_CUTOFF
+#define SC_SQR_TOOM3_CUTOFF ((size_t)50)
+#endif
+#ifndef SC_SQR_KARATSUBA_CUTOFF
+#define SC_SQR_KARATSUBA_CUTOFF ((size_t)40)
+#endif
+#ifndef SC_SQR_NTT_CUTOFF
+#define SC_SQR_NTT_CUTOFF ((size_t)-1)
+#endif
+#ifndef SC_SQR_SSA_CUTOFF
+#define SC_SQR_SSA_CUTOFF ((size_t)86)
 #endif
 #ifndef SC_SSA_MFA_CUTOFF_LOG
 #define SC_SSA_MFA_CUTOFF_LOG ((unsigned)13)

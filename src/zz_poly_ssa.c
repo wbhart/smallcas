@@ -106,9 +106,11 @@ static void sc_ssa_inverse(mp_ptr a, const sc_fft_plan *p, const sc_fft_mod *m,
 
 static sc_value *sc_zz_poly_mul_ssa_core(sc_context *ctx, const sc_value *a,
                                            const sc_value *b, size_t len,
-                                           size_t start, size_t outn, int cyclic)
+                                           size_t start, size_t outn, int cyclic,
+                                           int square)
 {
-    size_t an = a->data.zz_poly.length, bn = b->data.zz_poly.length;
+    size_t an = a->data.zz_poly.length;
+    size_t bn = square ? an : b->data.zz_poly.length;
     size_t k, limbs, words, pointn;
     unsigned depth, logn;
     sc_fft_mod m;
@@ -116,7 +118,7 @@ static sc_value *sc_zz_poly_mul_ssa_core(sc_context *ctx, const sc_value *a,
     mp_ptr av = NULL, bv, work = NULL;
     sc_value *r = NULL;
 
-    if (!sc_ssa_params_len(&k, &depth, &logn, a, b, len) ||
+    if (!sc_ssa_params_len(&k, &depth, &logn, a, square ? a : b, len) ||
         !sc_fft_mod_init(&m, 1, (mp_bitcnt_t)k, 2, depth)) {
         sc_set_error(ctx, "SSA parameter setup failed");
         return NULL;
@@ -124,30 +126,36 @@ static sc_value *sc_zz_poly_mul_ssa_core(sc_context *ctx, const sc_value *a,
     if (!sc_fft_plan_init(&p, logn, &m))
         goto fail_mod;
     limbs = (size_t)m.n;
-    if (p.len > SIZE_MAX / limbs / 2)
+    if (p.len > SIZE_MAX / limbs / (square ? 1 : 2))
         goto fail_plan;
-    words = 2 * p.len * limbs;
+    words = (square ? 1 : 2) * p.len * limbs;
     av = calloc(words, sizeof(mp_limb_t));
     work = calloc(4 * limbs + 1, sizeof(mp_limb_t));
     r = sc_value_new_zz_poly_checked(ctx, a->parent, outn);
     if (av == NULL || work == NULL || r == NULL)
         goto fail;
-    bv = av + p.len * limbs;
+    bv = square ? av : av + p.len * limbs;
     for (size_t i = 0; i < an; i++)
         sc_ssa_import(sc_fft_entry(av, i, &m), a->data.zz_poly.coeff[i], &m);
-    for (size_t i = 0; i < bn; i++)
-        sc_ssa_import(sc_fft_entry(bv, i, &m), b->data.zz_poly.coeff[i], &m);
+    if (!square)
+        for (size_t i = 0; i < bn; i++)
+            sc_ssa_import(sc_fft_entry(bv, i, &m), b->data.zz_poly.coeff[i], &m);
     if (!cyclic && outn < p.len) {
         sc_fft_forward_tft(av, an, outn, &p, &m, work);
-        sc_fft_forward_tft(bv, bn, outn, &p, &m, work);
+        if (!square)
+            sc_fft_forward_tft(bv, bn, outn, &p, &m, work);
     } else {
         sc_ssa_forward(av, &p, &m, work);
-        sc_ssa_forward(bv, &p, &m, work);
+        if (!square)
+            sc_ssa_forward(bv, &p, &m, work);
     }
     pointn = cyclic ? p.len : outn;
     for (size_t i = 0; i < pointn; i++)
-        sc_fft_mul(sc_fft_entry(av, i, &m), sc_fft_entry(av, i, &m),
-                   sc_fft_entry(bv, i, &m), &m, work);
+        if (square)
+            sc_fft_sqr(sc_fft_entry(av, i, &m), sc_fft_entry(av, i, &m), &m, work);
+        else
+            sc_fft_mul(sc_fft_entry(av, i, &m), sc_fft_entry(av, i, &m),
+                       sc_fft_entry(bv, i, &m), &m, work);
     if (!cyclic && outn < p.len)
         sc_fft_inverse_tft(av, outn, &p, &m, work);
     else
@@ -189,7 +197,7 @@ sc_value *sc_zz_poly_mulmid_ssa(sc_context *ctx, const sc_value *a,
         sc_set_error(ctx, "SSA middle-product shape unsupported");
         return NULL;
     }
-    return sc_zz_poly_mul_ssa_core(ctx, a, b, 2 * n - 1, n - 1, n, 1);
+    return sc_zz_poly_mul_ssa_core(ctx, a, b, 2 * n - 1, n - 1, n, 1, 0);
 }
 
 sc_value *sc_zz_poly_mul_ssa(sc_context *ctx, const sc_value *a, const sc_value *b)
@@ -207,7 +215,24 @@ sc_value *sc_zz_poly_mul_ssa(sc_context *ctx, const sc_value *a, const sc_value 
         return NULL;
     }
     outn = an + bn - 1;
-    return sc_zz_poly_mul_ssa_core(ctx, a, b, outn, 0, outn, 0);
+    return sc_zz_poly_mul_ssa_core(ctx, a, b, outn, 0, outn, 0, 0);
+}
+
+sc_value *sc_zz_poly_sqr_ssa(sc_context *ctx, const sc_value *a)
+{
+    size_t n, outn;
+
+    if (a == NULL)
+        return NULL;
+    n = a->data.zz_poly.length;
+    if (n == 0)
+        return sc_value_new_zz_poly_checked(ctx, a->parent, 0);
+    if (n > SIZE_MAX / 2 + 1) {
+        sc_set_error(ctx, "SSA square parameter setup failed");
+        return NULL;
+    }
+    outn = 2 * n - 1;
+    return sc_zz_poly_mul_ssa_core(ctx, a, a, outn, 0, outn, 0, 1);
 }
 
 static int sc_ssa_taylor_params(size_t *k, size_t *need_out, unsigned *depth,

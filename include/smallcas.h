@@ -281,6 +281,7 @@ sc_value *sc_zz_poly_mul_constant(sc_context *ctx,
                                   const sc_value *a, const sc_value *b);
 sc_value *sc_zz_poly_mul_classical(sc_context *ctx,
                                    const sc_value *a, const sc_value *b);
+sc_value *sc_zz_poly_sqr_classical(sc_context *ctx, const sc_value *a);
 sc_value *sc_zz_poly_mullow_classical(sc_context *ctx, const sc_value *a,
                                       const sc_value *b, size_t n);
 sc_value *sc_zz_poly_mullow_dc(sc_context *ctx, const sc_value *a,
@@ -297,7 +298,9 @@ sc_value *sc_zz_poly_mulmid_toom63(sc_context *ctx, sc_zz_poly_toom63_ws *ws);
 sc_value *sc_zz_poly_mulmid_toom63_tail(sc_context *ctx, const sc_value *a,
                                           const sc_value *b, size_t n);
 sc_value *sc_zz_poly_mul_ssa(sc_context *ctx, const sc_value *a, const sc_value *b);
+sc_value *sc_zz_poly_sqr_ssa(sc_context *ctx, const sc_value *a);
 sc_value *sc_zz_poly_mul_ntt(sc_context *ctx, const sc_value *a, const sc_value *b);
+sc_value *sc_zz_poly_sqr_ntt(sc_context *ctx, const sc_value *a);
 sc_value *sc_zz_poly_mulmid_ssa(sc_context *ctx, const sc_value *a,
                                 const sc_value *b, size_t n);
 sc_value *sc_zz_poly_mulmid_ntt(sc_context *ctx, const sc_value *a,
@@ -306,9 +309,13 @@ size_t sc_zz_poly_ntt_nprimes(const sc_value *a, const sc_value *b);
 size_t sc_zz_poly_mulmid_ntt_nprimes(const sc_value *a, const sc_value *b, size_t n);
 sc_value *sc_zz_poly_mul_ks(sc_context *ctx, const sc_value *a, const sc_value *b,
                                 mp_bitcnt_t bits);
+sc_value *sc_zz_poly_sqr_ks(sc_context *ctx, const sc_value *a,
+                                mp_bitcnt_t bits);
 sc_value *sc_zz_poly_mul_karatsuba(sc_context *ctx,
                                    const sc_value *a, const sc_value *b);
+sc_value *sc_zz_poly_sqr_karatsuba(sc_context *ctx, const sc_value *a);
 sc_value *sc_zz_poly_mul_toom3(sc_context *ctx, sc_zz_poly_toom3_ws *ws);
+sc_value *sc_zz_poly_sqr_toom3(sc_context *ctx, const sc_value *a);
 sc_value *sc_zz_poly_pow_binary(sc_context *ctx, const sc_value *a, unsigned long e);
 sc_value *sc_zz_poly_reverse_impl(sc_context *ctx, const sc_value *a, size_t n);
 sc_value *sc_zz_poly_degree_impl(sc_context *ctx, const sc_value *a);
@@ -370,6 +377,7 @@ sc_value *sc_zz_poly_pseudorem_fast(sc_context *ctx,
 sc_value *sc_zz_poly_add(sc_context *ctx, const sc_value *a, const sc_value *b);
 sc_value *sc_zz_poly_sub(sc_context *ctx, const sc_value *a, const sc_value *b);
 sc_value *sc_zz_poly_mul(sc_context *ctx, const sc_value *a, const sc_value *b);
+sc_value *sc_zz_poly_sqr(sc_context *ctx, const sc_value *a);
 sc_value *sc_zz_poly_mullow(sc_context *ctx, const sc_value *a, const sc_value *b,
                             size_t n);
 sc_value *sc_zz_poly_mulhigh(sc_context *ctx, const sc_value *a, const sc_value *b,

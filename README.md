@@ -1414,3 +1414,28 @@ base replaces the current best only for a measured 1% improvement. The resulting
 installed before the existing radix-2/MFA crossover search. No NTT MFA tuning is added.
 The experimental HGCD base and the general/unbalanced middle-product cutoff remain
 untuned pending the planned unbalanced algorithm work.
+
+## Iteration 64: square-specialized multiplication
+
+Polynomial squaring is now a first-class arithmetic family rather than an ordinary
+multiplication with equal operands.  The classical kernel forms diagonal squares once and
+pairs off-diagonal products; Karatsuba and Toom-3 recurse on squares and use one evaluation
+stream; Kronecker substitution packs once and squares the packed integer; CRT-NTT and SSA
+use one forward transform, pointwise squaring and one inverse transform.  Binary polynomial
+powering calls the square dispatcher for every squaring step, and ordinary multiplication
+also recognizes pointer-identical operands.
+
+`make tune` has an independent square chain because all of these constant-factor savings
+move the crossovers.  It tunes classical/KS, Karatsuba, Toom-3, CRT-NTT and SSA
+separately from multiplication.
+There is no separate low-bit Karatsuba square cutoff: once the coefficient size is below the
+polynomial length, the earlier KS test already owns that regime, while below the KS crossover
+classical squaring is the relevant competitor.  As with the other bounded searches, a backend
+may remain disabled when no sustained 5% win is found in the tested range.  On the reference
+machine the square crossovers were roughly KS 10, Karatsuba 40, Toom-3 50 and SSA 86, while
+CRT-NTT found no sustained win through the bounded range.  These numbers are tracked defaults
+only; machine-local `make tune` values remain authoritative.
+
+The multiplication chapter of `algorithms.tex` now records the square-specific identities
+and explains why the asymptotic complexity is unchanged while the leading work is reduced,
+including the two-transform rather than three-transform FFT/NTT square.

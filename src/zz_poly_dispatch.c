@@ -70,6 +70,24 @@ static mp_bitcnt_t sc_zz_poly_ks_bits(const sc_value *a, const sc_value *b)
     return (mp_bitcnt_t)(bits_a + bits_b + sc_ceil_log2_size(small) + 1);
 }
 
+static int sc_zz_poly_use_sqr_ks(const sc_value *a)
+{
+    size_t n = a->data.zz_poly.length;
+    size_t bits = sc_zz_poly_max_abs_bits_raw(a);
+
+    return n >= SC_SQR_KS_CUTOFF && bits < n;
+}
+
+static int sc_zz_poly_use_sqr_toom3(const sc_value *a)
+{
+    return a->data.zz_poly.length >= SC_SQR_TOOM3_CUTOFF;
+}
+
+static int sc_zz_poly_use_sqr_karatsuba(const sc_value *a)
+{
+    return a->data.zz_poly.length >= SC_SQR_KARATSUBA_CUTOFF;
+}
+
 static int sc_zz_poly_use_ks(const sc_value *a, const sc_value *b)
 {
     size_t an = a->data.zz_poly.length, bn = b->data.zz_poly.length;
@@ -244,10 +262,31 @@ sc_value *sc_zz_poly_sub(sc_context *ctx, const sc_value *a, const sc_value *b)
     return sc_zz_poly_sub_impl(ctx, a, b);
 }
 
+sc_value *sc_zz_poly_sqr(sc_context *ctx, const sc_value *a)
+{
+    if (a == NULL)
+        return NULL;
+    if (a->data.zz_poly.length <= 1)
+        return sc_zz_poly_sqr_classical(ctx, a);
+    if (sc_zz_poly_use_ntt_cutoff(a, a, SC_SQR_NTT_CUTOFF))
+        return sc_zz_poly_sqr_ntt(ctx, a);
+    if (sc_zz_poly_use_ssa_cutoff(a, a, SC_SQR_SSA_CUTOFF))
+        return sc_zz_poly_sqr_ssa(ctx, a);
+    if (sc_zz_poly_use_sqr_ks(a))
+        return sc_zz_poly_sqr_ks(ctx, a, sc_zz_poly_ks_bits(a, a));
+    if (sc_zz_poly_use_sqr_toom3(a))
+        return sc_zz_poly_sqr_toom3(ctx, a);
+    if (sc_zz_poly_use_sqr_karatsuba(a))
+        return sc_zz_poly_sqr_karatsuba(ctx, a);
+    return sc_zz_poly_sqr_classical(ctx, a);
+}
+
 sc_value *sc_zz_poly_mul(sc_context *ctx, const sc_value *a, const sc_value *b)
 {
     if (a == NULL || b == NULL)
         return NULL;
+    if (a == b)
+        return sc_zz_poly_sqr(ctx, a);
     if (a->data.zz_poly.length == 0 || b->data.zz_poly.length == 0)
         return sc_zz_poly_mul_classical(ctx, a, b);
     if (a->data.zz_poly.length == 1 || b->data.zz_poly.length == 1)

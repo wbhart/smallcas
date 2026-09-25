@@ -802,6 +802,110 @@ make one packed integer multiplication attractive.  A practical dispatcher may
 therefore use all four rather than regard any one of them as universally best.
 \end{remark}
 
+
+\subsection{Polynomial squaring}\label{sec:poly-squaring}
+
+Squaring is a special case of multiplication, but treating it as an ordinary
+product discards substantial symmetry.  For
+\[
+ f=\sum_{i=0}^{n-1} a_i x^i
+\]
+one has the exact identity
+\begin{equation}\label{eq:classical-square}
+ f^2=\sum_i a_i^2x^{2i}+2\sum_{i<j}a_i a_jx^{i+j}.
+\end{equation}
+Thus a classical square needs $n$ coefficient squares and only
+$n(n-1)/2$ distinct off-diagonal coefficient products, rather than $n^2$
+coefficient products.  The off-diagonal terms are doubled after they are
+formed.  This nearly halves the expensive scalar multiplication work while
+leaving the number of output coefficients unchanged.
+
+The same principle propagates through the recursive multiplication schemes.
+For Karatsuba, write $f=f_0+x^m f_1$ and form
+\[
+ z_0=f_0^2,\qquad z_2=f_1^2,\qquad z_1=(f_0+f_1)^2.
+\]
+Then
+\begin{equation}\label{eq:karatsuba-square}
+ f^2=z_0+x^m(z_1-z_0-z_2)+x^{2m}z_2.
+\end{equation}
+Hence the three recursive products become three recursive squares.  For
+Toom--3, the polynomial is evaluated once at
+$0,1,-1,2,\infty$; the five values are squared, and the ordinary Toom--3
+interpolation is applied unchanged.  A general product requires two
+independent evaluation streams, whereas a square requires only one.
+
+Kronecker substitution has an analogous specialization.  If $A=f(B)$ is the
+packed integer from Algorithm~\ref{alg:kronecker-product}, then the packed
+square is simply $A^2$.  The coefficient bound and radix choice are the same
+as for multiplying two copies of $f$, but only one packing operation is
+required, and the integer layer may use a dedicated integer-squaring
+algorithm.  The linear limb packing of the preceding subsection is therefore
+particularly important for powers: every binary-exponentiation step can pack
+one polynomial once and square the resulting integer.
+
+The transform case saves a whole transform.  Let $F$ denote any Fourier
+transform for which convolution is obtained by pointwise multiplication.  A
+general product uses
+\[
+  F(f),\qquad F(g),\qquad F^{-1}(F(f)\odot F(g)),
+\]
+whereas a square uses only
+\begin{equation}\label{eq:fft-square}
+  F(f),\qquad F^{-1}(F(f)\odot F(f)).
+\end{equation}
+Thus an FFT, NTT, MFA or TFT square needs one forward transform and one inverse
+transform rather than two forward transforms and one inverse transform.  The
+pointwise products become pointwise squares, and only one transform vector is
+needed.  The pointwise layer should itself use a square primitive when the
+coefficient ring provides one; for a multi-limb transform modulus this replaces
+a general limb product by an integer square before reduction.  The same statement
+applies to truncated transforms: compute the one
+required truncated forward transform, square the retained transform values,
+and apply the corresponding inverse truncated transform.
+
+\begin{algorithm}[Polynomial square dispatcher]\label{alg:poly-square-dispatch}
+Input $f\in\ZZ[x]$.
+\begin{enumerate}
+ \item For a small polynomial, use \eqref{eq:classical-square}.
+ \item In the packed regime, pack $f$ once and perform one integer square.
+ \item In the recursive polynomial regimes, use the square-specialized
+ Karatsuba or Toom--3 recurrences.
+ \item In the transform regimes, use one forward transform, pointwise
+ squaring, and one inverse transform as in \eqref{eq:fft-square}.
+ \item Choose the transitions independently from the multiplication
+ transitions, since all of the constant factors above change for squaring.
+\end{enumerate}
+\end{algorithm}
+
+\begin{theorem}\label{thm:poly-square-correctness-complexity}
+The square-specialized classical, Karatsuba, Toom--3, Kronecker and transform
+algorithms described above return $f^2$.  Each has the same asymptotic bit
+complexity as the corresponding general multiplication algorithm, but with
+smaller leading work.  In particular, a transform square uses two transforms
+instead of three, apart from pointwise arithmetic, and a balanced classical
+square uses about half as many distinct off-diagonal coefficient products as
+a general product.
+\end{theorem}
+
+\begin{proof}
+Equation~\eqref{eq:classical-square} follows by pairing the terms indexed by
+$(i,j)$ and $(j,i)$.  Equation~\eqref{eq:karatsuba-square} follows by expanding
+$(f_0+x^m f_1)^2$ and observing that
+$z_1-z_0-z_2=2f_0f_1$.  Toom--3 correctness follows because evaluation is a
+ring homomorphism: evaluating $f^2$ gives the square of each evaluated value,
+after which the same interpolation used for multiplication recovers the
+coefficients.  Kronecker correctness follows from the same evaluation
+homomorphism at $B$.  Finally, Fourier transformation converts convolution to
+pointwise multiplication, so \eqref{eq:fft-square} is the convolution theorem
+with the two operands equal.
+
+None of these changes alters the recursive exponent, packed operand size, or
+transform length of the corresponding multiplication algorithm.  They only
+remove duplicated scalar products, evaluations, packing, or forward
+transforms, proving the complexity statement.
+\end{proof}
+
 \subsection{Polynomial powering}
 
 For $f\in\ZZ[x]$ and a nonnegative integer $e$, polynomial powering asks for
@@ -809,6 +913,8 @@ $f^e$.  We use the convention $f^0=1$, including $0^0=1$.  Repeated
 multiplication needs $e-1$ products, whereas binary powering reduces this to
 $O(\log e)$ products.  The method is the ordinary left-to-right binary
 exponentiation algorithm; see, for example, \cite{BrentZimmermann2010}.
+The implementation sends every $r\leftarrow r^2$ step through the dedicated
+square dispatcher of Algorithm~\ref{alg:poly-square-dispatch}.
 
 \begin{algorithm}[Binary polynomial powering]\label{alg:binary-poly-power}
 Input $f\in\ZZ[x]$ and $e\ge0$.

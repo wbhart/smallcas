@@ -7,6 +7,11 @@ size_t sc_tune_mul_karatsuba_low_bits = 128;
 size_t sc_tune_mul_karatsuba_low_bits_cutoff = 91;
 size_t sc_tune_mul_ntt_cutoff = 1748;
 size_t sc_tune_mul_ssa_cutoff = 180;
+size_t sc_tune_sqr_ks_cutoff = 10;
+size_t sc_tune_sqr_toom3_cutoff = 50;
+size_t sc_tune_sqr_karatsuba_cutoff = 40;
+size_t sc_tune_sqr_ntt_cutoff = (size_t)-1;
+size_t sc_tune_sqr_ssa_cutoff = 86;
 unsigned sc_tune_ssa_mfa_cutoff_log = 13;
 unsigned sc_tune_fft_mfa_base_log = 8;
 

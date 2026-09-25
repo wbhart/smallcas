@@ -110,6 +110,33 @@ void sc_fft_mul(mp_ptr r, mp_srcptr a, mp_srcptr b,
     }
 }
 
+void sc_fft_sqr(mp_ptr r, mp_srcptr a, const sc_fft_mod *m, mp_ptr scratch)
+{
+    mp_size_t n = m->n, pn = 2 * n;
+    mp_ptr prod = scratch, q = scratch + 2 * n;
+
+    if (m->fermat) {
+        mp_size_t l = n - 1;
+        if (a[l])
+            sc_fft_set_ui(r, 1, m);
+        else {
+            mpn_sqr(prod, a, l);
+            sc_fft_reduce_fermat(r, prod, prod + l, m);
+        }
+        return;
+    }
+    mpn_sqr(prod, a, n);
+    while (pn > 0 && prod[pn - 1] == 0)
+        pn--;
+    if (pn < n || (pn == n && mpn_cmp(prod, m->mod, n) < 0)) {
+        mpn_zero(r, n);
+        if (pn != 0)
+            mpn_copyi(r, prod, pn);
+    } else {
+        mpn_tdiv_qr(q, r, 0, prod, pn, m->mod, n);
+    }
+}
+
 void sc_fft_mul_2exp(mp_ptr r, mp_srcptr a, size_t e,
                      const sc_fft_mod *m, mp_ptr scratch)
 {

@@ -109,6 +109,58 @@ static sc_value *mul_toom3(sc_context *ctx, const sc_value *a, const sc_value *b
     return sc_zz_poly_mul_toom3(ctx, &ws);
 }
 
+static sc_value *sqr_classical_tune(sc_context *ctx, const sc_value *a,
+                                      const sc_value *b)
+{
+    (void)b;
+    return sc_zz_poly_sqr_classical(ctx, a);
+}
+
+static sc_value *sqr_ks_tune(sc_context *ctx, const sc_value *a,
+                             const sc_value *b)
+{
+    size_t ba = sc_zz_poly_max_abs_bits_raw(a);
+    mp_bitcnt_t bits = (mp_bitcnt_t)(2 * ba + log2ceil(a->data.zz_poly.length) + 1);
+
+    (void)b;
+    return sc_zz_poly_sqr_ks(ctx, a, bits);
+}
+
+static sc_value *sqr_karatsuba_tune(sc_context *ctx, const sc_value *a,
+                                    const sc_value *b)
+{
+    (void)b;
+    return sc_zz_poly_sqr_karatsuba(ctx, a);
+}
+
+static sc_value *sqr_toom3_tune(sc_context *ctx, const sc_value *a,
+                                const sc_value *b)
+{
+    (void)b;
+    return sc_zz_poly_sqr_toom3(ctx, a);
+}
+
+static sc_value *sqr_ntt_tune(sc_context *ctx, const sc_value *a,
+                              const sc_value *b)
+{
+    (void)b;
+    return sc_zz_poly_sqr_ntt(ctx, a);
+}
+
+static sc_value *sqr_ssa_tune(sc_context *ctx, const sc_value *a,
+                              const sc_value *b)
+{
+    (void)b;
+    return sc_zz_poly_sqr_ssa(ctx, a);
+}
+
+static sc_value *sqr_dispatch_tune(sc_context *ctx, const sc_value *a,
+                                   const sc_value *b)
+{
+    (void)b;
+    return sc_zz_poly_sqr(ctx, a);
+}
+
 static double run(sc_context *ctx, mul_fn fn, const sc_value *a, const sc_value *b,
                   size_t reps)
 {
@@ -483,7 +535,12 @@ static unsigned tune_mfa(void)
 static int write_tuning(const tune_result *ks, const tune_result *toom,
                         const tune_result *kar, const tune_result *low,
                         const tune_result *ntt, size_t ntt_cut,
-                        const tune_result *ssa, unsigned mfa_base, unsigned mfa_cut,
+                        const tune_result *ssa,
+                        const tune_result *sqr_ks, const tune_result *sqr_toom,
+                        const tune_result *sqr_kar,
+                        const tune_result *sqr_ntt, size_t sqr_ntt_cut,
+                        const tune_result *sqr_ssa,
+                        unsigned mfa_base, unsigned mfa_cut,
                         const tune_result *lowdc, size_t low_ntt, size_t low_ssa,
                         size_t high_ntt, size_t high_ssa,
                         const tune_result *midclass, const tune_result *mid63,
@@ -518,6 +575,17 @@ static int write_tuning(const tune_result *ks, const tune_result *toom,
         fputs("#define SC_MUL_SSA_CUTOFF ((size_t)-1)\n", f);
     else
         fprintf(f, "#define SC_MUL_SSA_CUTOFF ((size_t)%zu)\n", ssa->cut);
+    fprintf(f, "#define SC_SQR_KS_CUTOFF ((size_t)%zu)\n", sqr_ks->cut);
+    fprintf(f, "#define SC_SQR_TOOM3_CUTOFF ((size_t)%zu)\n", sqr_toom->cut);
+    fprintf(f, "#define SC_SQR_KARATSUBA_CUTOFF ((size_t)%zu)\n", sqr_kar->cut);
+    if (sqr_ntt->win == 0)
+        fputs("#define SC_SQR_NTT_CUTOFF ((size_t)-1)\n", f);
+    else
+        fprintf(f, "#define SC_SQR_NTT_CUTOFF ((size_t)%zu)\n", sqr_ntt_cut);
+    if (sqr_ssa->win == 0)
+        fputs("#define SC_SQR_SSA_CUTOFF ((size_t)-1)\n", f);
+    else
+        fprintf(f, "#define SC_SQR_SSA_CUTOFF ((size_t)%zu)\n", sqr_ssa->cut);
     fprintf(f, "#define SC_FFT_MFA_BASE_LOG ((unsigned)%u)\n", mfa_base);
     if (mfa_cut == UINT_MAX)
         fputs("#define SC_SSA_MFA_CUTOFF_LOG ((unsigned)-1)\n", f);
@@ -1630,19 +1698,36 @@ static size_t ntt_cutoff_mid(sc_context *ctx, sc_parent *r, gmp_randstate_t stat
     return cut;
 }
 
+static size_t ntt_cutoff_square(sc_context *ctx, sc_parent *r,
+                                gmp_randstate_t state, const tune_result *tr)
+{
+    sc_value *a;
+    size_t np, cut = tr->cut;
+
+    if (tr->win == 0)
+        return (size_t)-1;
+    a = random_poly(ctx, r, tr->cut, 48, state);
+    np = a ? sc_zz_poly_ntt_nprimes(a, a) : 0;
+    if (np != 0)
+        cut /= np;
+    sc_value_free(a);
+    return cut;
+}
+
 int main(void)
 {
     sc_context ctx;
     sc_parent r = { "PolynomialRing(ZZ)", SC_PARENT_POLY, &SC_ZZ, "x" };
     gmp_randstate_t state;
     tune_result ks, kar, low, toom, ntt, ssa, lowdc;
+    tune_result sqr_ks, sqr_kar, sqr_toom, sqr_ntt, sqr_ssa;
     tune_result low_ntt_r, low_ssa_r, high_ntt_r, high_ssa_r;
     tune_result midclass, mid63, mid_ntt_r, mid_ssa_r;
     division_tuning div;
     gcd_tuning gcd;
     resultant_tuning resultant;
     tune_result evaluate, compose, taylor_dc, taylor;
-    size_t ntt_cut, toom_fallback, low_ntt_cut, low_ssa_cut;
+    size_t ntt_cut, sqr_ntt_cut, toom_fallback, low_ntt_cut, low_ssa_cut;
     size_t high_ntt_cut, high_ssa_cut, mid_ntt_cut, mid_ssa_cut, mid63_lo;
     unsigned mfa_base, mfa_cut;
 
@@ -1650,6 +1735,7 @@ int main(void)
     gmp_randinit_default(state);
     gmp_randseed_ui(state, 20260923);
     sc_tune_mul_ntt_cutoff = sc_tune_mul_ssa_cutoff = (size_t)-1;
+    sc_tune_sqr_ntt_cutoff = sc_tune_sqr_ssa_cutoff = (size_t)-1;
     sc_tune_mullow_ntt_cutoff = sc_tune_mullow_ssa_cutoff = (size_t)-1;
     sc_tune_mulhigh_ntt_cutoff = sc_tune_mulhigh_ssa_cutoff = (size_t)-1;
     sc_tune_mulmid_ntt_cutoff = sc_tune_mulmid_ssa_cutoff = (size_t)-1;
@@ -1682,6 +1768,36 @@ int main(void)
                     sc_zz_poly_mul, sc_zz_poly_mul_ssa, 0, 1, 32, 2048, (size_t)-1);
     sc_tune_mul_ntt_cutoff = ntt_cut;
     sc_tune_mul_ssa_cutoff = ssa.win ? ssa.cut : (size_t)-1;
+
+    puts("\nPolynomial squaring tuning: square-specific kernels and one-transform FFT paths.");
+    sqr_ks = tune_pair(&ctx, &r, state,
+                       "square classical -> Kronecker (8-bit coefficients)",
+                       sqr_classical_tune, sqr_ks_tune, 8, 0, 8, 256,
+                       sc_tune_sqr_ks_cutoff);
+    sc_tune_sqr_ks_cutoff = sqr_ks.cut;
+    sqr_kar = tune_pair(&ctx, &r, state,
+                        "square classical -> Karatsuba (256-bit coefficients)",
+                        sqr_classical_tune, sqr_karatsuba_tune, 256, 0, 4, 256,
+                        sc_tune_sqr_karatsuba_cutoff);
+    sc_tune_sqr_karatsuba_cutoff = sqr_kar.cut;
+    toom_fallback = sc_tune_sqr_toom3_cutoff;
+    sc_tune_sqr_toom3_cutoff = (size_t)-1;
+    sqr_toom = tune_pair(&ctx, &r, state,
+                         "square lower dispatcher -> Toom-3 (256-bit coefficients)",
+                         sqr_dispatch_tune, sqr_toom3_tune, 256, 0, 24, 768,
+                         toom_fallback);
+    sc_tune_sqr_toom3_cutoff = sqr_toom.cut;
+    sqr_ntt = tune_pair(&ctx, &r, state,
+                        "square lower dispatcher -> CRT-NTT (48-bit coefficients)",
+                        sqr_dispatch_tune, sqr_ntt_tune, 48, 0, 96, 16384,
+                        (size_t)-1);
+    sqr_ntt_cut = ntt_cutoff_square(&ctx, &r, state, &sqr_ntt);
+    sc_tune_sqr_ntt_cutoff = sqr_ntt_cut;
+    sqr_ssa = tune_pair(&ctx, &r, state,
+                        "square lower dispatcher -> SSA (bits = length)",
+                        sqr_dispatch_tune, sqr_ssa_tune, 0, 1, 32, 2048,
+                        (size_t)-1);
+    sc_tune_sqr_ssa_cutoff = sqr_ssa.win ? sqr_ssa.cut : (size_t)-1;
 
     puts("\nLow/high product tuning: lower short algorithm -> full FFT product and slice.");
     lowdc = tune_short_pair(&ctx, &r, state,
@@ -1751,7 +1867,9 @@ int main(void)
     taylor_dc = tune_taylor_dc(&ctx, &r, state);
     taylor = tune_taylor(&ctx, &r, state);
 
-    if (!write_tuning(&ks, &toom, &kar, &low, &ntt, ntt_cut, &ssa, mfa_base, mfa_cut,
+    if (!write_tuning(&ks, &toom, &kar, &low, &ntt, ntt_cut, &ssa,
+                      &sqr_ks, &sqr_toom, &sqr_kar,
+                      &sqr_ntt, sqr_ntt_cut, &sqr_ssa, mfa_base, mfa_cut,
                       &lowdc, low_ntt_cut, low_ssa_cut, high_ntt_cut, high_ssa_cut,
                       &midclass, &mid63, mid_ntt_cut, mid_ssa_cut, &div, &gcd,
                       &resultant, &evaluate, &compose, &taylor_dc, &taylor)) {
